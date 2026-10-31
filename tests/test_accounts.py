@@ -13,6 +13,9 @@ from gelauncher.core.command import offline_uuid
 def config(monkeypatch):
     cfg = Config()
     monkeypatch.setattr(Config, "save", lambda self, path=None: None)
+    # 测试不依赖环境里可能存在的 client id
+    monkeypatch.delenv(microsoft.CLIENT_ID_ENV, raising=False)
+    monkeypatch.setattr(microsoft, "DEFAULT_CLIENT_ID", "")
     return cfg
 
 
@@ -98,6 +101,31 @@ def test_authority_from_config_is_used_for_refresh(config, monkeypatch):
     )
     accounts.resolve_account(config)
     assert captured["authority"] == "common"
+
+
+def test_builtin_client_id_is_used_when_user_did_not_configure(config, monkeypatch):
+    """打包版内置 client id 时，用户不需要配置任何东西也能刷新登录。"""
+    config.add_msa_account(
+        {"name": "Steve", "uuid": "u", "refresh_token": "R", "expires_at": 1}
+    )
+    monkeypatch.setattr(microsoft, "DEFAULT_CLIENT_ID", "builtin-id")
+    captured = {}
+
+    def fake_refresh(client_id, refresh, authority="consumers"):
+        captured["client_id"] = client_id
+        return microsoft.MsaToken("NEW", "R2", 9_999_999_999)
+
+    monkeypatch.setattr(microsoft, "refresh_msa_token", fake_refresh)
+    monkeypatch.setattr(
+        microsoft,
+        "login_with_msa",
+        lambda token: microsoft.MinecraftSession(
+            access_token="MC", expires_at=9_999_999_999, name="Steve", uuid="u"
+        ),
+    )
+
+    accounts.resolve_account(config)
+    assert captured["client_id"] == "builtin-id"
 
 
 def test_msa_without_client_id_is_actionable(config):

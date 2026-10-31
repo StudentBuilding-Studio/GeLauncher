@@ -54,6 +54,20 @@ def test_authority_goes_into_the_url(transport):
     assert "/common/oauth2/v2.0/token" in transport.calls[-1][1]
 
 
+def test_effective_client_id_precedence(monkeypatch):
+    monkeypatch.delenv(microsoft.CLIENT_ID_ENV, raising=False)
+    monkeypatch.setattr(microsoft, "DEFAULT_CLIENT_ID", "builtin-id")
+
+    # 用户配置最优先
+    assert microsoft.effective_client_id("user-id") == "user-id"
+    # 没配置时用打包内置的
+    assert microsoft.effective_client_id("") == "builtin-id"
+    # 环境变量可以覆盖内置（打包/调试用）
+    monkeypatch.setenv(microsoft.CLIENT_ID_ENV, "env-id")
+    assert microsoft.effective_client_id("") == "env-id"
+    assert microsoft.effective_client_id("user-id") == "user-id"
+
+
 def test_device_flow_and_poll(transport):
     transport.push(
         200,
@@ -110,6 +124,18 @@ def test_xsts_error_is_translated(transport):
     with pytest.raises(microsoft.MSAuthError) as excinfo:
         microsoft.login_with_msa(microsoft.MsaToken("MSA", "R", 0))
     assert "Xbox 档案" in str(excinfo.value)
+
+
+def test_minecraft_login_403_means_app_not_approved(transport):
+    """Xbox 全通、Minecraft 返回 403 = client id 没获批使用 Minecraft API。"""
+    transport.push(200, {"Token": "XBL", "DisplayClaims": {"xui": [{"uhs": "UH"}]}})
+    transport.push(200, {"Token": "XSTS", "DisplayClaims": {"xui": [{"uhs": "UH"}]}})
+    transport.push(403, {})
+    with pytest.raises(microsoft.MinecraftNotApproved) as excinfo:
+        microsoft.login_with_msa(microsoft.MsaToken("MSA", "R", 0))
+    message = str(excinfo.value)
+    assert "mce-reviewappid" in message
+    assert "审批" in message
 
 
 def test_missing_minecraft_entitlement(transport):

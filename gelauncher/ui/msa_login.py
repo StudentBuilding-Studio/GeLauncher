@@ -22,7 +22,8 @@ from gelauncher.core import microsoft
 class MicrosoftLoginDialog(tk.Toplevel):
     def __init__(self, master: tk.Misc, client_id: str, authority: str = "consumers") -> None:
         super().__init__(master)
-        self.client_id = client_id
+        # 用户没配就用启动器内置的 client id（正常情况下用户完全不需要关心这个）
+        self.client_id = microsoft.effective_client_id(client_id)
         self.authority = authority or "consumers"
         self.result: dict | None = None
         self.messages: queue.Queue[tuple] = queue.Queue()

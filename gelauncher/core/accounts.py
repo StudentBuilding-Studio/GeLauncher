@@ -30,11 +30,11 @@ def resolve_account(config) -> Account:
 
     session = microsoft.session_from_record(record)
     if session is None:
-        client_id = getattr(config, "msa_client_id", "") or ""
+        client_id = microsoft.effective_client_id(getattr(config, "msa_client_id", ""))
         refresh_token = str(record.get("refresh_token") or "")
         if not client_id:
             raise microsoft.MSAuthError(
-                "微软账号需要 client id 才能刷新登录（设置页填一下，见 msa-setup.md）"
+                "这个启动器没有内置微软 client id，需要先配置（见 msa-setup.md）"
             )
         if not refresh_token:
             raise microsoft.MSAuthError("这个微软账号没有保存登录凭据，需要重新登录")
@@ -59,5 +59,5 @@ def resolve_account(config) -> Account:
         uuid=session.uuid,
         access_token=session.access_token,
         xuid=str(record.get("xuid") or ""),
-        client_id=getattr(config, "msa_client_id", "") or "",
+        client_id=microsoft.effective_client_id(getattr(config, "msa_client_id", "")),
     )

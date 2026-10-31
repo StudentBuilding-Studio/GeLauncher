@@ -9,14 +9,23 @@
 
 <https://portal.azure.com> → 用你的微软账号登录 → 搜索框输入 **Microsoft Entra ID**（旧名 Azure Active Directory）→ 进去。
 
+进去后如果看到的是 **Default Directory | 概述** 这种页面（说明你的账号已经自带一个租户，
+免费版就够用），直接看下面的第 2 步。
+
 ## 2. 注册应用
 
-1. 左侧选 **应用注册**（App registrations）→ 点 **新注册**（New registration）。
-2. **名称**：随便填，比如 `GeLauncher`。
-3. **受支持的帐户类型**：选 **仅个人 Microsoft 帐户**（Personal Microsoft accounts only）。
-   - 这一步很关键：选成"组织目录"的账号类型，Xbox / Minecraft 会拒绝登录。
-4. **重定向 URI**：留空（设备代码流不需要）。
-5. 点 **注册**。
+在「Default Directory | 概述」页：
+
+1. 点顶部 **「添加」** → 选 **「应用注册」**
+   （也可以展开左侧 **「管理」** → 「应用注册」→ **「+ 新注册」**）
+2. **名称**：随便填，比如 `GeLauncher`
+3. **受支持的帐户类型**：
+   - 如果下拉里有 **「仅个人 Microsoft 帐户」** → 选它（登录端点用 `consumers`）
+   - 如果没有（租户里通常没有这一项）→ 选 **「任何组织目录中的帐户和个人 Microsoft 帐户」**
+     （第三项，登录端点用 `common`，启动器会自动切）
+   - 千万不要选「仅此组织目录中的帐户」——那会让你的 Minecraft 账号登不进来
+4. **重定向 URI**：留空（设备代码流不需要）
+5. 点 **注册**
 
 ## 3. 复制 client id
 
@@ -25,8 +34,8 @@
 
 ## 4. 允许公共客户端流（必做）
 
-左侧 **身份验证**（Authentication）→ 拉到底部 **高级设置**（Advanced settings）→
-把 **允许公共客户端流**（Allow public client flows）切到 **是**（Yes）→ 点 **保存**。
+左侧 **「管理」→「身份验证」** → 拉到最底部 **「高级设置」** →
+把 **「允许公共客户端流」** 改成 **「是」** → 点 **「保存」**。
 
 不做这一步，设备代码流会直接被拒绝（返回 `unauthorized_client`）。
 
@@ -85,15 +94,44 @@ python -m gelauncher config set msa-client-id 12345678-1234-1234-1234-1234567890
 
 ### 关于登录端点（authority）
 
-- 应用注册在**个人账号**上 → 用 `consumers`
-- 应用注册在**组织租户**里（上面第 1/3 条路）→ 用 `common`
+**Minecraft 只认 `consumers`。** 官方文档写得很死：用 Azure AD 租户 ID 或 `common`，
+`XboxLive.signin` 这个 scope 会直接报 `AADSTS70011: not configured for this tenant`。
 
-启动器默认 `consumers`，连不上时会**自动再试 `common`**，成功后记住用的是哪个，
+- 应用注册成「仅个人 Microsoft 帐户」→ `consumers`（正确做法）
+- 应用注册成「组织目录 + 个人」→ 先用 `consumers`；某些情况会报 `AADSTS70016`
+  （应用不在消费端目录里），这时才退回 `common`
+
+启动器的顺序是 `consumers → common`，成功后记住用的是哪个，
 配置里对应字段是 `msa_authority`。
 
-### 还有一个可能的坑
+### 最后一道闸门：Minecraft API 需要申请（会 403）
 
-就算拿到了 client id，微软的 `authentication/login_with_xbox` 也可能对"未获批的应用"
-返回 403——这是微软对 Xbox Live / Minecraft 服务的策略限制，不是启动器的 bug。
-真遇到了把错误发过来，我们再一起看有没有别的路。
+**这是新建 Azure 应用必踩的坑**：账号登录、Xbox Live、XSTS 全过，
+但最后一步 `api.minecraftservices.com/authentication/login_with_xbox` 返回 **403**。
+
+原因：Mojang 要求新应用**申请 Minecraft API 权限**，见
+<https://aka.ms/mce-reviewappid>（官方帮助页：<https://help.minecraft.net/hc/en-us/articles/16254801392141p>）。
+没获批的应用一律 403，这跟代码和账号都没关系。
+
+提交时大致会问：
+
+| 字段 | 建议填写 |
+|---|---|
+| Application (client) ID | 你注册的那个 id |
+| Name of your application | `GeLauncher` |
+| 用途 / description | 个人使用的小型 Minecraft Java 启动器，只给自己和几个朋友用，不公开发行 |
+| 是否商业用途 | 否 |
+| 联系人邮箱 | 你的邮箱 |
+
+提交后等回复（几天到几周不等）。批准之后**同一个 client id** 就能直接登录，不需要改代码。
+
+> 这也是为什么各家第三方启动器都带着"自己已经获批的 client id"发行——
+> 审批是**按应用**走的，不按用户。所以只要这个应用批下来，
+> **你所有朋友在各自电脑上都能直接用它登录**，他们不用申请任何东西。
+
+### 如果暂时拿不到批准
+
+- 先用**离线账号**（联机进不去的服就没办法了）
+- 或者用已经获批的启动器的 client id（技术上能跑，但那是别人的应用，随时可能失效，
+  也不符合对方条款，本启动器不会内置）
 

@@ -595,8 +595,9 @@ class AccountsPage(Page):
             text=(
                 "微软账号：登录后可以联机、显示正版皮肤。\n"
                 "离线账号：只在本地用，名字和 UUID 自己定。\n\n"
-                "微软登录需要在 Azure 注册一个应用，\n"
-                "步骤见 msa-setup.md。"
+                "client id 是启动器自己的身份，\n"
+                "打包版已内置，你不需要申请。\n"
+                "（从源码运行才需要，见 msa-setup.md）"
             ),
             foreground="#666",
             justify="left",
@@ -776,7 +777,10 @@ class SettingsPage(Page):
         )
         ttk.Label(
             general,
-            text="用微软账号登录前要填这个，注册步骤见 msa-setup.md",
+            text=(
+                "client id 是启动器自己的身份，正常打包版已内置，留空即可；\n"
+                "只有从源码运行、没内置时才需要填，步骤见 msa-setup.md"
+            ),
             foreground="#666",
             wraplength=520,
         ).grid(row=4, column=0, columnspan=2, sticky="w")

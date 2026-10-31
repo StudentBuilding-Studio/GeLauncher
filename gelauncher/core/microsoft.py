@@ -37,6 +37,25 @@ MC_PROFILE_URL = "https://api.minecraftservices.com/minecraft/profile"
 
 USER_AGENT = "gelauncher/0.1"
 
+#: 启动器内置的 Azure 应用 client id。
+#:
+#: client id 是"这个启动器程序"的身份，不是用户的东西：注册一次、所有电脑所有朋友共用。
+#: 作者拿到自己的 id 后填在这里（打包时也可以用环境变量注入），用户就不需要再配置任何东西。
+#: 留空时才会要求用户自己去注册（见 msa-setup.md）。
+DEFAULT_CLIENT_ID = "da034f04-f535-48f6-a639-46a6f09bbfff"
+CLIENT_ID_ENV = "GE_MSA_CLIENT_ID"
+
+
+def effective_client_id(configured: str = "") -> str:
+    """优先用用户配置，其次用内置值，最后看环境变量（方便打包/调试时覆盖）。"""
+    import os
+
+    configured = (configured or "").strip()
+    if configured:
+        return configured
+    return (os.environ.get(CLIENT_ID_ENV) or DEFAULT_CLIENT_ID or "").strip()
+
+
 #: XSTS 常见错误码 → 人话
 XSTS_ERRORS = {
     2148916233: "这个微软账号还没有 Xbox 档案。先打开 https://www.xbox.com 随便登录一次，再回来重试。",
@@ -238,10 +257,25 @@ def _describe_oauth_error(payload: dict, status: int) -> str:
     error = payload.get("error") or f"HTTP {status}"
     description = payload.get("error_description") or payload.get("message") or ""
     hint = ""
-    if error in ("unauthorized_client", "invalid_client") or "AADSTS700016" in description:
+    if "AADSTS70002" in description:
+        hint = (
+            "（设备代码流要求「公共客户端」：Azure → 应用注册 → 身份验证 → 高级设置 →"
+            " 允许公共客户端流 = 是，保存后重试）"
+        )
+    elif "AADSTS50059" in description:
+        hint = (
+            "（这个应用是「单租户」，common 端点不认。去 Azure → 应用注册 → 清单，"
+            "把 signInAudience 改成 AzureADandPersonalMicrosoftAccount）"
+        )
+    elif "AADSTS700016" in description:
+        hint = (
+            "（应用不在这个登录端点对应的目录里：多半是应用只注册成了单租户，"
+            "或 client id 填错；把它改成「任何组织目录中的帐户和个人 Microsoft 帐户」）"
+        )
+    elif error in ("unauthorized_client", "invalid_client"):
         hint = "（检查 client id 是否填对，以及 Azure 里有没有勾选「允许公共客户端流」）"
-    elif "AADSTS50020" in description or "AADSTS50059" in description:
-        hint = "（应用要注册成「仅个人 Microsoft 帐户」）"
+    elif "AADSTS50020" in description:
+        hint = "（应用要允许个人 Microsoft 帐户登录）"
     return f"{error}: {description}{hint}".strip()
 
 
@@ -303,14 +337,25 @@ def _xbox_token_from(payload: dict) -> XboxToken:
 # --------------------------------------------------------------------------- #
 
 
+class MinecraftNotApproved(MSAuthError):
+    """登录链路全通，但这个 client id 没被 Mojang 批准使用 Minecraft API。"""
+
+
 def minecraft_session(xsts: XboxToken) -> tuple[str, float]:
     status, payload = _request(
         "POST",
         MC_LOGIN_URL,
         json_body={"identityToken": f"XBL3.0 x={xsts.user_hash};{xsts.token}"},
     )
+    if status == 403:
+        raise MinecraftNotApproved(
+            "Minecraft 拒绝了这次登录（HTTP 403）：这个 client id 还没获批使用 Minecraft API。\n"
+            "需要填 https://aka.ms/mce-reviewappid 申请，批准后再试。\n"
+            "（登录、Xbox、XSTS 都已经通过了，只差这一道人工审批）"
+        )
     if status >= 400 or "access_token" not in payload:
-        raise MSAuthError(f"Minecraft 登录失败（HTTP {status}）")
+        detail = payload.get("errorMessage") or payload.get("error") or ""
+        raise MSAuthError(f"Minecraft 登录失败（HTTP {status}）{('：' + detail) if detail else ''}")
     expires_in = int(payload.get("expires_in", 86400))
     return payload["access_token"], time.time() + expires_in
 

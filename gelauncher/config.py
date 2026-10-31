@@ -50,6 +50,13 @@ def _clean_path(path: str) -> str:
     return str(Path(path))
 
 
+def _looks_like_guid(text: str) -> bool:
+    """租户 id 的粗略形状检查（8-4-4-4-12）。"""
+    import re
+
+    return bool(re.fullmatch(r"[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", text or ""))
+
+
 @dataclass
 class Config:
     # ---- 全局 ----
@@ -148,7 +155,9 @@ class Config:
             self.instances = {}
 
         if self.msa_authority not in ("consumers", "common"):
-            self.msa_authority = "consumers"
+            # 兜底：单租户应用可以在这里直接填租户 id；其它乱值回落到 consumers
+            value = (self.msa_authority or "").strip()
+            self.msa_authority = value if _looks_like_guid(value) else "consumers"
 
         # 目录列表：统一分隔符、去重，并保证当前目录排在最前面
         dirs = [d for d in (self.game_dirs or []) if isinstance(d, str) and d.strip()]
