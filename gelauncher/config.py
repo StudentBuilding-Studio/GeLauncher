@@ -71,7 +71,7 @@ class Config:
     selected_account: str = "Player"
     #: "offline" 或 "msa"
     selected_account_type: str = "offline"
-    #: 微软登录用的 Azure 应用 client id（见 docs/微软登录准备.md）
+    #: 微软登录用的 Azure 应用 client id（见 docs/msa-setup.md）
     msa_client_id: str = ""
     #: 登录端点：个人账号 consumers；组织租户（Power Apps/学生/朋友的 Azure）用 common
     msa_authority: str = "consumers"

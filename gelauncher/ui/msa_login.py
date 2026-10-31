@@ -80,7 +80,7 @@ class MicrosoftLoginDialog(tk.Toplevel):
     def _start(self) -> None:
         if not self.client_id:
             self.status_var.set(
-                "还没配置微软 client id。\n先看 docs/微软登录准备.md 注册应用，"
+                "还没配置微软 client id。\n先看 docs/msa-setup.md 注册应用，"
                 "再用 `ge config set msa-client-id <id>` 填进去。"
             )
             return

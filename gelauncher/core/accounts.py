@@ -34,7 +34,7 @@ def resolve_account(config) -> Account:
         refresh_token = str(record.get("refresh_token") or "")
         if not client_id:
             raise microsoft.MSAuthError(
-                "微软账号需要 client id 才能刷新登录（设置页填一下，见 docs/微软登录准备.md）"
+                "微软账号需要 client id 才能刷新登录（设置页填一下，见 docs/msa-setup.md）"
             )
         if not refresh_token:
             raise microsoft.MSAuthError("这个微软账号没有保存登录凭据，需要重新登录")
