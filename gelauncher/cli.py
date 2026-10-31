@@ -362,6 +362,14 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_ui(args: argparse.Namespace, config: Config) -> int:
+    if args.game_dir:
+        config.game_dir = str(args.game_dir)
+    from .ui.app import run_ui
+
+    return run_ui(config)
+
+
 def cmd_config(args: argparse.Namespace, config: Config) -> int:
     if args.action == "set":
         if args.key == "max-memory":
@@ -505,6 +513,10 @@ def build_parser() -> argparse.ArgumentParser:
     info.add_argument("--version-id", dest="version", required=True)
     info.add_argument("--list-libraries", action="store_true")
     info.set_defaults(func=cmd_info)
+
+    ui = sub.add_parser("ui", help="打开图形界面")
+    ui.add_argument("--game-dir", type=Path, help="临时指定游戏目录")
+    ui.set_defaults(func=cmd_ui)
 
     cfg = sub.add_parser("config", help="查看 / 修改配置")
     cfg.add_argument("action", nargs="?", choices=["show", "set"], default="show")

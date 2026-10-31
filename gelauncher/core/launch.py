@@ -28,6 +28,7 @@ from .command import (
 )
 from .java import JavaError, JavaRuntime, find_java
 from .layout import GameLayout, current_env
+from .logfmt import GameOutputFormatter
 from .models import VersionJson
 from .natives import NativesError, extract_natives
 from .rules import Environment
@@ -276,13 +277,22 @@ class LaunchResult:
 
 
 def _pump(stream: TextIO, sink: TextIO | None, on_line: Callable[[str], None] | None) -> None:
+    formatter = GameOutputFormatter()
+
+    def emit(text: str) -> None:
+        if on_line is not None:
+            on_line(text)
+        if sink is not None:
+            sink.write(text + "\n")
+            sink.flush()
+
     try:
         for line in stream:
-            if on_line is not None:
-                on_line(line.rstrip("\r\n"))
-            if sink is not None:
-                sink.write(line)
-                sink.flush()
+            text = formatter.feed(line.rstrip("\r\n"))
+            if text is not None:
+                emit(text)
+        for leftover in formatter.flush():
+            emit(leftover)
     except (ValueError, OSError):
         pass  # 进程退出时管道关掉是正常的
 

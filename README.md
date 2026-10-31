@@ -36,6 +36,16 @@ python -m gelauncher verify --version-id 1.21.8 --seconds 25
 python -m gelauncher config set game-dir D:\Minecraft\.minecraft
 ```
 
+## 图形界面
+
+```bash
+python -m gelauncher ui
+python -m gelauncher ui --game-dir D:\Minecraft\.minecraft   # 临时换目录
+```
+
+界面能力：版本列表（双击启动）、玩家名/内存设置、安装原版、给选中版本装 Fabric/Forge、
+打印启动命令、打开游戏目录、实时日志。
+
 ## 目录约定
 
 - **版本隔离**：游戏工作目录默认是 `versions/<id>/`（mods、saves、options.txt 都跟着版本走），
@@ -96,5 +106,5 @@ gelauncher/
 - [x] M2 安装原版（manifest + 镜像 + sha1，实装 1.21.8 / 526MB 通过）
 - [x] M3 Fabric（meta profile，3.8 秒，启动通过）
 - [x] M4 Forge（官方 installer + 预置库，启动通过）
-- [ ] M5 Tkinter UI
+- [x] M5 Tkinter UI（列表 / 安装 / 启动 / 日志 / 设置）
 - [ ] M6 打包分发
