@@ -8,7 +8,7 @@
       → api.minecraftservices.com/minecraft/profile（拿名字和 uuid，顺带判断有没有买游戏）
 
 设备代码流的好处：不需要本地端口，界面上显示一串代码，用户在浏览器里输入即可。
-代价：要在 Azure 里注册一个"公共客户端"应用（见 docs/msa-setup.md）。
+代价：要在 Azure 里注册一个"公共客户端"应用（见 msa-setup.md）。
 
 所有网络请求都走 :func:`_request`，测试里替换它就能完整跑通流程。
 """
@@ -145,7 +145,7 @@ def _request(
 
 def start_device_flow(client_id: str, authority: str = DEFAULT_AUTHORITY) -> DeviceCode:
     if not client_id:
-        raise MSAuthError("还没配置微软 client id（见 docs/msa-setup.md）")
+        raise MSAuthError("还没配置微软 client id（见 msa-setup.md）")
     status, payload = _request(
         "POST",
         _url(authority, DEVICE_CODE_PATH),

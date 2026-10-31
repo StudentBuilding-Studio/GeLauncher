@@ -596,7 +596,7 @@ class AccountsPage(Page):
                 "微软账号：登录后可以联机、显示正版皮肤。\n"
                 "离线账号：只在本地用，名字和 UUID 自己定。\n\n"
                 "微软登录需要在 Azure 注册一个应用，\n"
-                "步骤见 docs/msa-setup.md。"
+                "步骤见 msa-setup.md。"
             ),
             foreground="#666",
             justify="left",
@@ -776,7 +776,7 @@ class SettingsPage(Page):
         )
         ttk.Label(
             general,
-            text="用微软账号登录前要填这个，注册步骤见 docs/msa-setup.md",
+            text="用微软账号登录前要填这个，注册步骤见 msa-setup.md",
             foreground="#666",
             wraplength=520,
         ).grid(row=4, column=0, columnspan=2, sticky="w")
