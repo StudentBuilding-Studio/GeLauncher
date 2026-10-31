@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -33,5 +34,8 @@ def tmp_path(request) -> Path:
     base = _WORKSPACE / ".pytest-tmp"
     safe_name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in request.node.nodeid)
     target = base / f"{next(_COUNTER):03d}-{safe_name[:60]}"
+    # 上一次跑剩下的目录会让"应该下载"变成"应该跳过"，所以先清干净
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
     target.mkdir(parents=True, exist_ok=True)
     return target

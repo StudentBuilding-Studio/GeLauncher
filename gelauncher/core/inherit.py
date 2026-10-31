@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+from . import libraries
 from .layout import GameLayout
 from .models import AssetIndex, Library, LoggingClient, VersionJson
 
@@ -46,12 +47,18 @@ def load_chain(layout: GameLayout, version_id: str) -> list[VersionJson]:
 def _merge_libraries(
     parent: tuple[Library, ...], child: tuple[Library, ...]
 ) -> tuple[Library, ...]:
-    """父在前；子版本里同名的库替换掉父版本的同名库。"""
-    merged: dict[str, Library] = {}
+    """父在前；**同一个 group:artifact:classifier** 的库，用子版本的。
+
+    去重键里刻意不含版本号：否则 Fabric profile 里的 ``asm:9.10.1`` 会和原版的
+    ``asm:9.6`` 同时留在 classpath 上，Fabric 启动时会直接报
+    "duplicate ASM classes found on classpath"（实测踩过）。
+    classifier 必须留在键里，否则 natives 库会被普通库挤掉。
+    """
+    merged: dict[tuple, Library] = {}
     for library in parent:
-        merged[library.name] = library
+        merged[libraries.library_key(library)] = library
     for library in child:
-        merged[library.name] = library
+        merged[libraries.library_key(library)] = library
     return tuple(merged.values())
 
 

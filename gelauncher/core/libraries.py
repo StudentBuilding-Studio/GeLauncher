@@ -80,6 +80,20 @@ def coordinate_ok(library: Library) -> bool:
     return True
 
 
+def library_key(library: Library) -> tuple:
+    """合并去重用的键：``group:artifact:classifier``（**不含版本号**）。
+
+    不含版本号是刻意的：加载器版本 JSON 会带新版 asm 等库，如果按完整坐标去重，
+    就会和原版的老版本同时进 classpath，导致 Fabric 直接拒绝启动。
+    带 classifier 是必须的，否则 natives 库会被同名的普通库覆盖掉。
+    """
+    try:
+        coord = coordinate(library)
+    except LibraryError:
+        return ("name", library.name)
+    return (coord.group, coord.artifact, coord.classifier)
+
+
 def is_native_library(library: Library) -> bool:
     """该库是不是"只解压、不进 classpath"的 natives 库。
 

@@ -19,10 +19,17 @@ from . import __version__
 from .config import Config
 from .core.command import Account
 from .core.inherit import InheritError
-from .core.java import installed_javas
+from .core.install_loader import (
+    LoaderInstallError,
+    install_fabric,
+    install_forge,
+)
+from .core.install_vanilla import InstallError, install_version, missing_report, remote_versions
+from .core.java import JavaError, find_java, installed_javas
 from .core.launch import LaunchError, LaunchOptions, prepare, run
 from .core.layout import GameLayout, current_env
 from .core.models import VersionJsonError
+from .core.net import Fetcher
 from .core.rules import allow
 from .core import libraries
 
@@ -242,6 +249,119 @@ def cmd_verify(args: argparse.Namespace, config: Config) -> int:
     return 1
 
 
+def _fetcher(args: argparse.Namespace) -> Fetcher:
+    from .core.net import BMCLAPI, DEFAULT_SOURCES, MIRROR_FIRST_SOURCES, Fetcher
+
+    if args.source == "official":
+        sources = (DEFAULT_SOURCES[0],)
+    elif args.source == "mirror":
+        sources = (BMCLAPI,)
+    elif args.source == "mirror-first":
+        sources = MIRROR_FIRST_SOURCES
+    else:
+        sources = DEFAULT_SOURCES
+    return Fetcher(sources=sources, threads=args.threads)
+
+
+def cmd_available(args: argparse.Namespace, config: Config) -> int:
+    fetcher = _fetcher(args)
+    try:
+        versions = remote_versions(fetcher, kind=None if args.type == "all" else args.type)
+    except Exception as exc:  # noqa: BLE001 - 网络错误直接给人话
+        print(f"拿不到版本列表：{exc}", file=sys.stderr)
+        return 1
+    for version in versions[: args.limit]:
+        layout = _make_layout(args, config)
+        installed = " [已安装]" if layout.version_json_path(version.id).is_file() else ""
+        print(f"  {version.id:<24} {version.type:<10} {version.release_time or ''}{installed}")
+    print(f"\n共 {len(versions)} 个，显示前 {min(args.limit, len(versions))} 个")
+    return 0
+
+
+def _print_progress(stage: str, done: int, total: int, message: str) -> None:
+    if stage in ("assets", "libraries") and total > 0:
+        if done % 100 == 0 or done == total:
+            print(f"\r  {stage:<10} {done}/{total}  {message[:60]}", end="", flush=True)
+            if done == total:
+                print(flush=True)
+        return
+    print(f"  [{stage}] {message}", flush=True)
+
+
+def cmd_install(args: argparse.Namespace, config: Config) -> int:
+    layout = _make_layout(args, config)
+    fetcher = _fetcher(args)
+    print(f"安装 {args.version} → {layout.root}")
+    try:
+        report = install_version(
+            layout,
+            args.version,
+            fetcher=fetcher,
+            with_assets=not args.no_assets,
+            progress=_print_progress,
+        )
+    except InstallError as exc:
+        print(f"安装失败：{exc}", file=sys.stderr)
+        return 1
+
+    for message in report.messages:
+        print(f"  [提示] {message}")
+    if report.downloads.failures:
+        print(f"有 {len(report.downloads.failures)} 个文件没下下来：", file=sys.stderr)
+        print(missing_report(report), file=sys.stderr)
+    print(
+        f"完成：下载 {report.downloads.downloaded} 个 / 跳过 {report.downloads.skipped} 个，"
+        f"共 {report.downloads.bytes_written / 1024 / 1024:.1f} MB"
+    )
+    if report.ok:
+        version = report.version
+        if version and version.java_version:
+            print(f"这个版本需要 Java {version.java_version}")
+        print(f"\n可以启动了：python -m gelauncher launch --version-id {args.version}")
+        return 0
+    return 1
+
+
+def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
+    layout = _make_layout(args, config)
+    fetcher = _fetcher(args)
+    java = find_java(None, args.java) if args.java else None
+
+    def progress(stage: str, message: str) -> None:
+        if stage == "log":
+            print(f"  | {message}", flush=True)
+        else:
+            print(f"  [{stage}] {message}", flush=True)
+
+    try:
+        if args.loader == "fabric":
+            report = install_fabric(
+                layout,
+                args.mc,
+                loader_version=args.loader_version,
+                fetcher=fetcher,
+                java=java,
+                progress=progress,
+                use_installer=args.use_installer,
+            )
+        else:
+            report = install_forge(
+                layout,
+                args.mc,
+                forge_version=args.forge_version,
+                fetcher=fetcher,
+                java=java,
+                progress=progress,
+            )
+    except (LoaderInstallError, JavaError) as exc:
+        print(f"安装失败：{exc}", file=sys.stderr)
+        return 1
+
+    print(f"\n装好了：{report.version_id}")
+    print(f"可以启动了：python -m gelauncher launch --version-id {report.version_id}")
+    return 0
+
+
 def cmd_config(args: argparse.Namespace, config: Config) -> int:
     if args.action == "set":
         if args.key == "max-memory":
@@ -339,6 +459,46 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--game-arg", action="append")
     verify.add_argument("--no-isolate", action="store_true")
     verify.set_defaults(func=cmd_verify)
+
+    install = sub.add_parser("install", help="安装一个原版版本（库 / assets / 客户端 jar）")
+    _add_common(install)
+    install.add_argument("--version-id", dest="version", required=True, help="要装的版本，例如 1.21.8")
+    install.add_argument("--no-assets", action="store_true", help="跳过 assets（能启动但没声音）")
+    install.add_argument(
+        "--source",
+        choices=["auto", "official", "mirror", "mirror-first"],
+        default="auto",
+        help="下载源顺序：auto=官方优先再镜像，mirror-first=镜像优先",
+    )
+    install.add_argument("--threads", type=int, default=8, help="并发下载数，默认 8")
+    install.set_defaults(func=cmd_install)
+
+    available = sub.add_parser("available", help="列出官方有哪些版本可装")
+    _add_common(available)
+    available.add_argument("--type", choices=["release", "snapshot", "all"], default="release")
+    available.add_argument("--limit", type=int, default=25)
+    available.add_argument("--source", choices=["auto", "official", "mirror", "mirror-first"], default="auto")
+    available.add_argument("--threads", type=int, default=4)
+    available.set_defaults(func=cmd_available)
+
+    loader = sub.add_parser("install-loader", help="装 Fabric / Forge（调用官方 installer）")
+    _add_common(loader)
+    loader.add_argument("--loader", choices=["fabric", "forge"], required=True)
+    loader.add_argument("--mc", required=True, help="原版版本，例如 1.21.8（必须是已经装好的）")
+    loader.add_argument("--loader-version", help="Fabric loader 版本，默认取最新稳定版")
+    loader.add_argument(
+        "--use-installer",
+        action="store_true",
+        help="Fabric 坚持走官方 installer（默认走 meta profile JSON，不依赖 maven.fabricmc.net）",
+    )
+    loader.add_argument("--forge-version", help="Forge 版本，例如 47.4.0 或 1.20.1-47.4.0")
+    loader.add_argument(
+        "--source",
+        choices=["auto", "official", "mirror", "mirror-first"],
+        default="auto",
+    )
+    loader.add_argument("--threads", type=int, default=4)
+    loader.set_defaults(func=cmd_install_loader)
 
     info = sub.add_parser("info", help="看一个版本的解析结果")
     _add_common(info)

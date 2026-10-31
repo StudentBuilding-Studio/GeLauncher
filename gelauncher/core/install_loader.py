@@ -1,0 +1,597 @@
+"""装加载器：Fabric 走 meta profile JSON，Forge 走官方 installer。
+
+这里和方案原文有一处重要偏离（2026-10-31 实测）：
+- 方案原本打算"Fabric/Forge 都调官方 installer"；
+- 但实测 ``maven.fabricmc.net`` 从本机 **TLS 握手每次都失败**，而 BMCLAPI 不镜像
+  ``fabric-installer`` 这个 jar（404），所以 Fabric 的 installer 根本下不下来；
+- 而 BMCLAPI 提供了完整的 ``/fabric-meta/.../profile/json`` 和 fabric 的 Maven 镜像，
+  这正是 HMCL 的做法：拿 profile JSON 自己写 ``versions/<id>/<id>.json`` + 下 8 个库。
+  Fabric 的 profile JSON 就是"标准版本 JSON + inheritsFrom"，和 installer 产物等价。
+
+Forge 仍然调官方 installer：installer 本身能从 BMCLAPI 下到（6.3MB/1.4s），
+并且它支持 ``--mirror``，可以把库下载指到镜像。
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import threading
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Callable
+
+from . import libraries
+from .java import JavaRuntime, find_java
+from .layout import GameLayout
+from .models import VersionJson, VersionJsonError
+from .net import DEFAULT_SOURCES, DownloadJob, DownloadReport, Fetcher, Source
+from .rules import Environment, allow
+
+FABRIC_META = "https://meta.fabricmc.net/v2"
+FABRIC_MAVEN = "https://maven.fabricmc.net"
+FORGE_MAVEN = "https://maven.minecraftforge.net"
+FORGE_PROMOTIONS = "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
+BMCLAPI_MAVEN = "https://bmclapi2.bangbang93.com/maven/"
+
+INSTALLER_TIMEOUT = 15 * 60
+
+ProgressHook = Callable[[str, str], None]
+
+
+class LoaderInstallError(RuntimeError):
+    """加载器安装失败。message 里会带上 installer 输出的最后几十行。"""
+
+
+@dataclass
+class LoaderReport:
+    version_id: str
+    loader: str
+    installer_path: Path | None = None
+    installer_output: list[str] = field(default_factory=list)
+    downloads: DownloadReport = field(default_factory=DownloadReport)
+
+
+def _notify(hook: ProgressHook | None, stage: str, message: str) -> None:
+    if hook is not None:
+        hook(stage, message)
+
+
+def _prefer_mirror(fetcher: Fetcher) -> Fetcher:
+    """加载器相关的下载多给几次重试。
+
+    不在这里硬把镜像排前面：Fetcher 自己会做 5 秒可达性探测，
+    通不过的"源×主机"会被拉黑，然后自动落到镜像上。
+    这样既能快，又不会在镜像比官方慢的时候（实测 assets 上慢 30 倍）吃亏。
+    """
+    return replace(fetcher, retries=max(fetcher.retries, 3))
+
+
+# --------------------------------------------------------------------------- #
+# 版本查询
+# --------------------------------------------------------------------------- #
+
+
+def fabric_loader_versions(fetcher: Fetcher, mc_version: str) -> list[str]:
+    """某个 MC 版本可用的 fabric-loader 版本，最新在前。"""
+    url = f"{FABRIC_META}/versions/loader/{mc_version}"
+    raw = fetcher.get_bytes(url, label=f"fabric loader 列表（{mc_version}）")
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise LoaderInstallError(f"Fabric meta 返回的不是 JSON：{exc}") from exc
+    stable = []
+    everything = []
+    for entry in data:
+        loader = entry.get("loader") or {}
+        version = loader.get("version")
+        if not version:
+            continue
+        everything.append(version)
+        if loader.get("stable", False):
+            stable.append(version)
+    versions = stable or everything
+    if not versions:
+        raise LoaderInstallError(
+            f"Fabric 没有支持 {mc_version} 的 loader（这个版本可能太老或太新）"
+        )
+    return versions
+
+
+def latest_fabric_loader(fetcher: Fetcher, mc_version: str) -> str:
+    return fabric_loader_versions(fetcher, mc_version)[0]
+
+
+def latest_fabric_installer(fetcher: Fetcher) -> tuple[str, str]:
+    """返回 (installer 版本, 下载地址)。只在显式要求用 installer 时才需要。"""
+    raw = fetcher.get_bytes(f"{FABRIC_META}/versions/installer", label="fabric installer 列表")
+    data = json.loads(raw.decode("utf-8"))
+    if not data:
+        raise LoaderInstallError("Fabric meta 没有返回任何 installer 版本")
+    entry = data[0]
+    version = entry["version"]
+    url = entry.get("url") or (
+        f"{FABRIC_MAVEN}/net/fabricmc/fabric-installer/{version}/"
+        f"fabric-installer-{version}.jar"
+    )
+    return version, url
+
+
+def forge_promotions(fetcher: Fetcher) -> dict[str, str]:
+    raw = fetcher.get_bytes(FORGE_PROMOTIONS, label="Forge promotions")
+    return json.loads(raw.decode("utf-8")).get("promos", {})
+
+
+def _version_sort_key(text: str) -> list:
+    # 数字段比字母段"大"，避免 int 和 str 直接比较抛 TypeError
+    return [
+        (1, int(part)) if part.isdigit() else (0, part.lower())
+        for part in text.replace("-", ".").split(".")
+        if part
+    ]
+
+
+def forge_versions_from_mirror(fetcher: Fetcher, mc_version: str) -> list[str]:
+    """BMCLAPI 的 ``/forge/minecraft/<mc>`` 接口（实测 200，比 files.minecraftforge.net 可靠）。"""
+    raw = fetcher.get_bytes(
+        f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}",
+        label=f"Forge 版本列表（{mc_version}）",
+    )
+    data = json.loads(raw.decode("utf-8"))
+    versions = [str(entry.get("version")) for entry in data if entry.get("version")]
+    return versions
+
+
+def forge_versions_from_maven(fetcher: Fetcher, mc_version: str) -> list[str]:
+    """最后兜底：从 maven-metadata.xml 里筛 ``<mc>-<ver>``。"""
+    raw = fetcher.get_bytes(
+        f"{FORGE_MAVEN}/net/minecraftforge/forge/maven-metadata.xml",
+        label="Forge maven-metadata",
+    )
+    text = raw.decode("utf-8", "replace")
+    import re
+
+    prefix = mc_version + "-"
+    versions = []
+    for match in re.finditer(r"<version>([^<]+)</version>", text):
+        value = match.group(1)
+        if value.startswith(prefix):
+            versions.append(value[len(prefix) :])
+    return versions
+
+
+def forge_version_for(fetcher: Fetcher, mc_version: str, prefer: str = "recommended") -> str:
+    """挑一个 Forge 版本。
+
+    顺序很重要（都是实测出来的）：
+    1. BMCLAPI 的版本列表——最快最稳；
+    2. 官方 promotions_slim.json——最"权威"，但 files.minecraftforge.net 经常超时；
+    3. maven-metadata.xml——最后兜底。
+    """
+    errors: list[str] = []
+    for loader in (
+        lambda: forge_versions_from_mirror(fetcher, mc_version),
+        lambda: _promo_versions(fetcher, mc_version, prefer),
+        lambda: forge_versions_from_maven(fetcher, mc_version),
+    ):
+        try:
+            versions = loader()
+        except Exception as exc:  # noqa: BLE001 - 每个源都可能挂，记录下来换下一个
+            errors.append(f"{type(exc).__name__}: {exc}")
+            continue
+        clean = [v for v in versions if "beta" not in v.lower() and "pre" not in v.lower()]
+        candidates = clean or versions
+        if candidates:
+            return max(candidates, key=_version_sort_key)
+    raise LoaderInstallError(
+        f"拿不到 {mc_version} 的 Forge 版本（{'; '.join(errors)}）\n"
+        "可以手动指定：--forge-version 1.21.8-58.0.0"
+    )
+
+
+def _promo_versions(fetcher: Fetcher, mc_version: str, prefer: str) -> list[str]:
+    promos = forge_promotions(fetcher)
+    order = ["recommended", "latest"] if prefer == "recommended" else ["latest", "recommended"]
+    result = []
+    for kind in order:
+        value = promos.get(f"{mc_version}-{kind}")
+        if value:
+            result.append(value)
+    result.extend(v for k, v in promos.items() if k.startswith(f"{mc_version}-"))
+    return result
+
+
+def fabric_version_id(mc_version: str, loader_version: str) -> str:
+    return f"fabric-loader-{loader_version}-{mc_version}"
+
+
+def forge_version_id(mc_version: str, forge_version: str) -> str:
+    forge = (
+        forge_version.split("-", 1)[1]
+        if forge_version.startswith(mc_version + "-")
+        else forge_version
+    )
+    return f"{mc_version}-forge-{forge}"
+
+
+# --------------------------------------------------------------------------- #
+# Fabric：profile JSON 方式
+# --------------------------------------------------------------------------- #
+
+
+def fetch_fabric_profile(fetcher: Fetcher, mc_version: str, loader_version: str) -> dict:
+    url = f"{FABRIC_META}/versions/loader/{mc_version}/{loader_version}/profile/json"
+    raw = fetcher.get_bytes(url, label=f"fabric profile（{mc_version}/{loader_version}）")
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        raise LoaderInstallError(f"Fabric profile 不是合法 JSON：{exc}") from exc
+
+
+def install_fabric(
+    layout: GameLayout,
+    mc_version: str,
+    *,
+    loader_version: str | None = None,
+    fetcher: Fetcher | None = None,
+    java: JavaRuntime | None = None,
+    progress: ProgressHook | None = None,
+    env: Environment | None = None,
+    use_installer: bool = False,
+) -> LoaderReport:
+    """装 Fabric。
+
+    默认走 profile JSON（不需要 Java、不依赖那台上不去的 maven）；
+    ``use_installer=True`` 时才真的去跑 fabric-installer。
+    """
+    fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
+    require_vanilla(layout, mc_version)
+    env = env or Environment()
+
+    _notify(progress, "resolve", f"查 Fabric loader 版本（MC {mc_version}）…")
+    loader_version = loader_version or latest_fabric_loader(fetcher, mc_version)
+
+    if use_installer:
+        return _install_fabric_via_installer(
+            layout,
+            mc_version,
+            loader_version,
+            fetcher=fetcher,
+            java=java,
+            progress=progress,
+        )
+
+    _notify(progress, "profile", f"取 Fabric profile（loader {loader_version}）…")
+    profile = fetch_fabric_profile(fetcher, mc_version, loader_version)
+    version_id = str(profile.get("id") or fabric_version_id(mc_version, loader_version))
+    profile["id"] = version_id
+    profile.setdefault("inheritsFrom", mc_version)
+
+    try:
+        version = VersionJson.from_dict(profile, f"fabric-profile({version_id})")
+    except VersionJsonError as exc:
+        raise LoaderInstallError(f"Fabric profile 解析失败：{exc}") from exc
+
+    version_dir = layout.version_dir(version_id)
+    version_dir.mkdir(parents=True, exist_ok=True)
+    json_path = layout.version_json_path(version_id)
+    json_path.write_text(
+        json.dumps(profile, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+    jobs = _library_jobs(layout, version, env)
+    _notify(progress, "libraries", f"下载 {len(jobs)} 个 Fabric 库…")
+    done = 0
+
+    def on_done(job: DownloadJob, _report: DownloadReport) -> None:
+        nonlocal done
+        done += 1
+        _notify(progress, "libraries", f"{done}/{len(jobs)} {job.destination.name}")
+
+    report = fetcher.download_all(jobs, on_done=on_done)
+    if not report.ok:
+        raise LoaderInstallError(
+            "Fabric 库下载失败：\n"
+            + "\n".join(f"  - {name}：{reason}" for name, reason in report.failures[:10])
+        )
+
+    verify_installed(layout, version_id, mc_version)
+    _notify(progress, "done", f"装好了：{version_id}")
+    return LoaderReport(version_id=version_id, loader="fabric", downloads=report)
+
+
+def _library_jobs(
+    layout: GameLayout, version: VersionJson, env: Environment
+) -> list[DownloadJob]:
+    jobs: list[DownloadJob] = []
+    for library in version.libraries:
+        if not allow(library.rules, env):
+            continue
+        artifact = library.artifact or libraries.synthetic_artifact(library)
+        if artifact is None:
+            continue
+        relative = libraries.artifact_relative_path(library, artifact)
+        urls = [artifact.url] if artifact.url else []
+        if not urls:
+            base = library.url or FABRIC_MAVEN
+            urls = [f"{base.rstrip('/')}/{relative}"]
+        jobs.append(
+            DownloadJob(
+                urls=urls,
+                destination=layout.libraries_dir / relative,
+                sha1=artifact.sha1,
+                size=artifact.size,
+                label=relative,
+            )
+        )
+    return jobs
+
+
+# --------------------------------------------------------------------------- #
+# Fabric：installer 方式（备用，需要能访问 maven.fabricmc.net）
+# --------------------------------------------------------------------------- #
+
+
+def _install_fabric_via_installer(
+    layout: GameLayout,
+    mc_version: str,
+    loader_version: str,
+    *,
+    fetcher: Fetcher,
+    java: JavaRuntime | None,
+    progress: ProgressHook | None,
+) -> LoaderReport:
+    installer_version, installer_url = latest_fabric_installer(fetcher)
+    cache_dir = layout.root / "launcher" / "installers"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    installer_path = cache_dir / f"fabric-installer-{installer_version}.jar"
+    _notify(progress, "download", f"下载 fabric-installer {installer_version}…")
+    _download_installer(fetcher, [installer_url], installer_path, installer_path.name)
+
+    java = java or find_java(None)
+    _notify(progress, "install", f"运行 Fabric installer（Java {java.major}）…")
+    output = run_installer(
+        java,
+        installer_path,
+        [
+            "client",
+            "-dir",
+            str(layout.root),
+            "-mcversion",
+            mc_version,
+            "-loader",
+            loader_version,
+            "-noprofile",
+        ],
+        cwd=layout.root,
+        on_line=lambda line: _notify(progress, "log", line),
+    )
+    version_id = fabric_version_id(mc_version, loader_version)
+    verify_installed(layout, version_id, mc_version)
+    return LoaderReport(
+        version_id=version_id,
+        loader="fabric",
+        installer_path=installer_path,
+        installer_output=output,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Forge
+# --------------------------------------------------------------------------- #
+
+
+def seed_install_profile_libraries(
+    fetcher: Fetcher,
+    layout: GameLayout,
+    installer_path: Path,
+    *,
+    progress: ProgressHook | None = None,
+) -> tuple[int, list[tuple[str, str]]]:
+    """把 installer 的 ``install_profile.json`` 里列的库先下好。
+
+    为什么需要这一步（实测）：Forge installer 自己的 HTTP 客户端在跟随
+    BMCLAPI 的 302 跳到 cernet 镜像时会被 403 挡掉（同一个 URL 用 Python 下载却是 200），
+    于是安装会卡在 ``mcp_config@zip`` 上失败。先把这些文件按 sha1 下到
+    ``libraries/``，installer 会"File exists: Checksum validated"直接跳过。
+    """
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(installer_path) as archive:
+            raw = archive.read("install_profile.json")
+    except (KeyError, zipfile.BadZipFile) as exc:
+        raise LoaderInstallError(f"读不了 installer 的 install_profile.json：{exc}") from exc
+    profile = json.loads(raw.decode("utf-8"))
+    entries = profile.get("libraries") or []
+    jobs: list[DownloadJob] = []
+    for entry in entries:
+        artifact = (entry.get("downloads") or {}).get("artifact") or {}
+        path = artifact.get("path")
+        url = artifact.get("url")
+        if not path or not url:
+            continue
+        jobs.append(
+            DownloadJob(
+                urls=[url],
+                destination=layout.libraries_dir / path,
+                sha1=artifact.get("sha1"),
+                size=artifact.get("size"),
+                label=path,
+            )
+        )
+    if not jobs:
+        return 0, []
+    _notify(progress, "seed", f"预下载 installer 需要的 {len(jobs)} 个库…")
+    report = fetcher.download_all(jobs)
+    return report.downloaded + report.skipped, report.failures
+
+
+def install_forge(
+    layout: GameLayout,
+    mc_version: str,
+    *,
+    forge_version: str | None = None,
+    fetcher: Fetcher | None = None,
+    java: JavaRuntime | None = None,
+    progress: ProgressHook | None = None,
+    use_mirror: bool = True,
+) -> LoaderReport:
+    fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
+    require_vanilla(layout, mc_version)
+
+    _notify(progress, "resolve", f"查 Forge 版本（MC {mc_version}）…")
+    forge_version = forge_version or forge_version_for(fetcher, mc_version)
+    coordinate = (
+        forge_version
+        if forge_version.startswith(mc_version + "-")
+        else f"{mc_version}-{forge_version}"
+    )
+
+    cache_dir = layout.root / "launcher" / "installers"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    installer_name = f"forge-{coordinate}-installer.jar"
+    installer_path = cache_dir / installer_name
+    _notify(progress, "download", f"下载 {installer_name}…")
+    _download_installer(
+        fetcher,
+        [f"{FORGE_MAVEN}/net/minecraftforge/forge/{coordinate}/{installer_name}"],
+        installer_path,
+        installer_name,
+    )
+
+    seeded, failures = seed_install_profile_libraries(
+        fetcher, layout, installer_path, progress=progress
+    )
+    if failures:
+        _notify(
+            progress,
+            "seed",
+            f"[警告] {len(failures)} 个库预下载失败，交给 installer 自己重试："
+            + ", ".join(name for name, _ in failures[:3]),
+        )
+    else:
+        _notify(progress, "seed", f"{seeded} 个库已就位")
+
+    java = java or find_java(None)
+    args = ["--installClient", str(layout.root)]
+    if use_mirror:
+        # Forge installer 的 --mirror 会把库下载指到镜像，避免直连 maven.minecraftforge.net
+        args += ["--mirror", BMCLAPI_MAVEN]
+    _notify(progress, "install", f"运行 Forge installer（Java {java.major}）…")
+    output = run_installer(
+        java,
+        installer_path,
+        args,
+        cwd=layout.root,
+        on_line=lambda line: _notify(progress, "log", line),
+    )
+
+    version_id = forge_version_id(mc_version, coordinate)
+    verify_installed(layout, version_id, mc_version)
+    return LoaderReport(
+        version_id=version_id,
+        loader="forge",
+        installer_path=installer_path,
+        installer_output=output,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 公共
+# --------------------------------------------------------------------------- #
+
+
+def _download_installer(fetcher: Fetcher, urls: list[str], destination: Path, label: str) -> Path:
+    from .net import DownloadError
+
+    try:
+        report = fetcher.download(DownloadJob(urls=urls, destination=destination, label=label))
+    except DownloadError as exc:
+        raise LoaderInstallError(f"installer 下载失败：{exc}") from exc
+    if not report.ok:
+        raise LoaderInstallError(f"installer 下载失败：{report.failures}")
+    return destination
+
+
+def run_installer(
+    java: JavaRuntime,
+    installer: Path,
+    args: list[str],
+    *,
+    cwd: Path,
+    timeout: int = INSTALLER_TIMEOUT,
+    on_line: Callable[[str], None] | None = None,
+) -> list[str]:
+    """跑 installer，把输出逐行喂给回调，失败时抛出带尾部日志的异常。"""
+    command = [str(java.path), "-jar", str(installer), *args]
+    output: list[str] = []
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=str(cwd),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except OSError as exc:
+        raise LoaderInstallError(f"启动 installer 失败：{exc}") from exc
+
+    assert process.stdout is not None
+
+    def pump() -> None:
+        for line in process.stdout:  # type: ignore[union-attr]
+            text = line.rstrip("\r\n")
+            output.append(text)
+            if on_line is not None:
+                on_line(text)
+
+    thread = threading.Thread(target=pump, daemon=True)
+    thread.start()
+    try:
+        returncode = process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        raise LoaderInstallError(
+            f"installer 超过 {timeout // 60} 分钟没结束，已终止。\n最后输出：\n{tail(output)}"
+        ) from None
+    thread.join(timeout=5)
+
+    if returncode != 0:
+        raise LoaderInstallError(
+            f"installer 退出码 {returncode}，安装失败。\n最后 50 行输出：\n{tail(output)}"
+        )
+    return output
+
+
+def tail(lines: list[str], count: int = 50) -> str:
+    return "\n".join(lines[-count:])
+
+
+def require_vanilla(layout: GameLayout, mc_version: str) -> None:
+    if not layout.version_json_path(mc_version).is_file():
+        raise LoaderInstallError(
+            f"还没装原版 {mc_version}：找不到 {layout.version_json_path(mc_version)}\n"
+            f"先运行：ge install --version-id {mc_version}"
+        )
+
+
+def verify_installed(layout: GameLayout, version_id: str, mc_version: str) -> None:
+    """装完后的机制验收：目录在、JSON 在、inheritsFrom 指回原版。"""
+    json_path = layout.version_json_path(version_id)
+    if not json_path.is_file():
+        installed = ", ".join(layout.installed_versions()) or "（空）"
+        raise LoaderInstallError(
+            f"没找到 {json_path}\n现在的版本目录：{installed}\n"
+            "可能 installer 把文件装到别处了，或者版本命名规则变了。"
+        )
+    data = json.loads(json_path.read_text(encoding="utf-8-sig"))
+    parent = data.get("inheritsFrom")
+    if parent and parent != mc_version:
+        raise LoaderInstallError(
+            f"{version_id} 的 inheritsFrom 是 {parent!r}，期望 {mc_version!r}。"
+            "安装可能装到了别的原版上。"
+        )

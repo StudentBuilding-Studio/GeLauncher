@@ -4,6 +4,7 @@
 .venv/
 .tmp/
 .pytest-tmp/
+.test-minecraft/
 __pycache__/
 *.py[cod]
 .pytest_cache/
