@@ -306,40 +306,10 @@ class LauncherApp:
         return chain
 
     def designated_account(self) -> Account:
-        """本次启动用的账号。微软账号会确保 token 有效（必要时自动刷新）。"""
-        config = self.config
-        if config.selected_account_type != "msa":
-            return Account.offline(config.selected_account or "Player")
+        """本次启动用的账号（微软账号会自动刷新 token）。"""
+        from gelauncher.core.accounts import resolve_account
 
-        record = config.msa_account(config.selected_account)
-        if record is None:
-            raise RuntimeError(f"找不到微软账号 {config.selected_account}，去账号页重新登录")
-
-        session = microsoft.session_from_record(record)
-        if session is None:
-            if not config.msa_client_id:
-                raise RuntimeError("微软账号需要 client id 才能刷新登录，见 docs/微软登录准备.md")
-            token = microsoft.refresh_msa_token(
-                config.msa_client_id, str(record.get("refresh_token") or "")
-            )
-            session = microsoft.login_with_msa(token)
-            record.update(
-                access_token=session.access_token,
-                expires_at=session.expires_at,
-                name=session.name,
-                uuid=session.uuid,
-                refresh_token=token.refresh_token,
-            )
-            config.add_msa_account(record)
-            config.save()
-
-        return Account.microsoft(
-            name=session.name,
-            uuid=session.uuid,
-            access_token=session.access_token,
-            xuid=str(record.get("xuid") or ""),
-            client_id=config.msa_client_id,
-        )
+        return resolve_account(self.config)
 
     def print_command(self, version_id: str) -> None:
         settings = self.config.instance(version_id)

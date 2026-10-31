@@ -117,10 +117,15 @@ def config_path_hint() -> str:
 
 def cmd_launch(args: argparse.Namespace, config: Config) -> int:
     layout = _make_layout(args, config)
+    try:
+        account = _launch_account(args, config)
+    except LaunchError as exc:
+        print(f"启动失败：{exc}", file=sys.stderr)
+        return 1
     options = LaunchOptions(
         layout=layout,
         version_id=args.version,
-        account=Account(name=args.username or config.username),
+        account=account,
         java_path=args.java or (Path(config.java_path) if config.java_path else None),
         max_memory_mb=args.max_memory or config.max_memory_mb,
         width=args.width or config.width,
@@ -172,13 +177,31 @@ def _stamp() -> str:
     return datetime.now().strftime("%Y%m%d-%H%M%S")
 
 
+def _launch_account(args: argparse.Namespace, config: Config):
+    """--username 显式给了就用离线账号，否则用配置里的当前账号（可能是微软）。"""
+    if getattr(args, "username", None):
+        return Account(name=args.username)
+    from .core.accounts import resolve_account
+    from .core.microsoft import MSAuthError
+
+    try:
+        return resolve_account(config)
+    except MSAuthError as exc:
+        raise LaunchError(str(exc)) from exc
+
+
 def cmd_verify(args: argparse.Namespace, config: Config) -> int:
     """机械验收（方案 §6.4）：进程存活 N 秒 + 游戏日志里出现关键字。"""
     layout = _make_layout(args, config)
+    try:
+        account = _launch_account(args, config)
+    except LaunchError as exc:
+        print(f"验收失败：{exc}", file=sys.stderr)
+        return 1
     options = LaunchOptions(
         layout=layout,
         version_id=args.version,
-        account=Account(name=args.username or config.username),
+        account=account,
         java_path=args.java or (Path(config.java_path) if config.java_path else None),
         max_memory_mb=args.max_memory or config.max_memory_mb,
         extra_jvm_args=tuple(args.jvm_arg or ()),
@@ -190,7 +213,6 @@ def cmd_verify(args: argparse.Namespace, config: Config) -> int:
     except (LaunchError, InheritError, VersionJsonError) as exc:
         print(f"验收失败：{exc}", file=sys.stderr)
         return 1
-
     for warning in plan.warnings:
         print(f"[警告] {warning}", file=sys.stderr)
     print(f"命令：{plan.printable_command()[:400]}{'…' if len(plan.printable_command()) > 400 else ''}")
