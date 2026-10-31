@@ -33,6 +33,27 @@ def transport(monkeypatch):
     return fake
 
 
+def test_authority_goes_into_the_url(transport):
+    transport.push(
+        200,
+        {
+            "device_code": "DEV",
+            "user_code": "CODE",
+            "verification_uri": "https://x",
+            "expires_in": 900,
+            "interval": 5,
+        },
+    )
+    device = microsoft.start_device_flow("cid", "common")
+    assert device.authority == "common"
+    assert "/common/oauth2/v2.0/devicecode" in transport.calls[-1][1]
+
+    # 轮询要用同一个 authority
+    transport.push(200, {"access_token": "A", "refresh_token": "R", "expires_in": 10})
+    microsoft.poll_device_token("cid", device, sleep=lambda _s: None)
+    assert "/common/oauth2/v2.0/token" in transport.calls[-1][1]
+
+
 def test_device_flow_and_poll(transport):
     transport.push(
         200,

@@ -155,7 +155,9 @@ def test_accounts_page_add_microsoft(app, monkeypatch):
         "access_token": "A",
         "expires_at": 0,
     }
-    monkeypatch.setattr(msa_login, "login_microsoft", lambda master, client_id: record)
+    monkeypatch.setattr(
+        msa_login, "login_microsoft", lambda master, client_id, authority="consumers": record
+    )
 
     accounts = app.pages["accounts"]
     app.show_page("accounts")

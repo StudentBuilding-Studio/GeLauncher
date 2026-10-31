@@ -55,7 +55,9 @@ def test_msa_refreshes_expired_session(config, monkeypatch):
     monkeypatch.setattr(
         microsoft,
         "refresh_msa_token",
-        lambda client_id, refresh: microsoft.MsaToken("NEW", "R2", 9_999_999_999),
+        lambda client_id, refresh, authority="consumers": microsoft.MsaToken(
+            "NEW", "R2", 9_999_999_999
+        ),
     )
     monkeypatch.setattr(
         microsoft,
@@ -72,6 +74,30 @@ def test_msa_refreshes_expired_session(config, monkeypatch):
     assert stored["access_token"] == "MC-NEW"
     assert stored["refresh_token"] == "R2"
     assert stored["uuid"] == "uuid-new"
+
+
+def test_authority_from_config_is_used_for_refresh(config, monkeypatch):
+    config.add_msa_account(
+        {"name": "Steve", "uuid": "u", "refresh_token": "R", "expires_at": 1}
+    )
+    config.msa_client_id = "cid"
+    config.msa_authority = "common"
+    captured = {}
+
+    def fake_refresh(client_id, refresh, authority="consumers"):
+        captured["authority"] = authority
+        return microsoft.MsaToken("NEW", "R2", 9_999_999_999)
+
+    monkeypatch.setattr(microsoft, "refresh_msa_token", fake_refresh)
+    monkeypatch.setattr(
+        microsoft,
+        "login_with_msa",
+        lambda token: microsoft.MinecraftSession(
+            access_token="MC", expires_at=9_999_999_999, name="Steve", uuid="u"
+        ),
+    )
+    accounts.resolve_account(config)
+    assert captured["authority"] == "common"
 
 
 def test_msa_without_client_id_is_actionable(config):

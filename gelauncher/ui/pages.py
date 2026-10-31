@@ -665,10 +665,16 @@ class AccountsPage(Page):
     def add_microsoft(self) -> None:
         from gelauncher.ui.msa_login import login_microsoft
 
-        record = login_microsoft(self, self.app.config.msa_client_id)
+        record = login_microsoft(
+            self,
+            self.app.config.msa_client_id,
+            self.app.config.msa_authority,
+        )
         if not record:
             return
         self.app.config.add_msa_account(record)
+        if record.get("authority"):
+            self.app.config.msa_authority = record["authority"]
         self.app.config.save()
         self.refresh()
         self.app.set_status(f"已登录微软账号 {record.get('name')}")

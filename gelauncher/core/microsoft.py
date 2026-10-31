@@ -23,8 +23,11 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable
 
-DEVICE_CODE_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode"
-TOKEN_URL = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token"
+DEVICE_CODE_PATH = "/oauth2/v2.0/devicecode"
+TOKEN_PATH = "/oauth2/v2.0/token"
+#: 登录端点。个人账号用 consumers；组织租户（Power Apps / 学生 / 朋友的 Azure）用 common。
+AUTHORITIES = ("consumers", "common")
+DEFAULT_AUTHORITY = "consumers"
 SCOPE = "XboxLive.signin offline_access"
 
 XBL_USER_URL = "https://user.auth.xboxlive.com/user/authenticate"
@@ -59,6 +62,12 @@ class DeviceCode:
     expires_in: int
     interval: int
     message: str = ""
+    authority: str = DEFAULT_AUTHORITY
+
+
+def _url(authority: str, path: str) -> str:
+    authority = authority or DEFAULT_AUTHORITY
+    return f"https://login.microsoftonline.com/{authority}{path}"
 
 
 @dataclass(frozen=True)
@@ -134,12 +143,12 @@ def _request(
 # --------------------------------------------------------------------------- #
 
 
-def start_device_flow(client_id: str) -> DeviceCode:
+def start_device_flow(client_id: str, authority: str = DEFAULT_AUTHORITY) -> DeviceCode:
     if not client_id:
         raise MSAuthError("还没配置微软 client id（见 docs/微软登录准备.md）")
     status, payload = _request(
         "POST",
-        DEVICE_CODE_URL,
+        _url(authority, DEVICE_CODE_PATH),
         form={"client_id": client_id, "scope": SCOPE},
     )
     if status >= 400 or "device_code" not in payload:
@@ -151,6 +160,7 @@ def start_device_flow(client_id: str) -> DeviceCode:
         expires_in=int(payload.get("expires_in", 900)),
         interval=int(payload.get("interval", 5)),
         message=payload.get("message", ""),
+        authority=authority,
     )
 
 
@@ -165,10 +175,11 @@ def poll_device_token(
     """轮询直到用户完成登录。``authorization_pending`` 是正常状态。"""
     interval = max(1, device.interval)
     deadline = now() + device.expires_in
+    token_url = _url(device.authority, TOKEN_PATH)
     while now() < deadline:
         status, payload = _request(
             "POST",
-            TOKEN_URL,
+            token_url,
             form={
                 "client_id": client_id,
                 "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
@@ -195,10 +206,12 @@ def poll_device_token(
     raise MSAuthError("登录超时，重新开始登录。")
 
 
-def refresh_msa_token(client_id: str, refresh_token: str) -> MsaToken:
+def refresh_msa_token(
+    client_id: str, refresh_token: str, authority: str = DEFAULT_AUTHORITY
+) -> MsaToken:
     status, payload = _request(
         "POST",
-        TOKEN_URL,
+        _url(authority, TOKEN_PATH),
         form={
             "client_id": client_id,
             "grant_type": "refresh_token",
@@ -341,6 +354,7 @@ def account_record(
     access_token: str = "",
     expires_at: float = 0.0,
     xuid: str = "",
+    authority: str = DEFAULT_AUTHORITY,
 ) -> dict:
     return {
         "type": "msa",
@@ -350,6 +364,7 @@ def account_record(
         "access_token": access_token,
         "expires_at": expires_at,
         "xuid": xuid,
+        "authority": authority,
     }
 
 

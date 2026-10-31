@@ -38,7 +38,11 @@ def resolve_account(config) -> Account:
             )
         if not refresh_token:
             raise microsoft.MSAuthError("这个微软账号没有保存登录凭据，需要重新登录")
-        token = microsoft.refresh_msa_token(client_id, refresh_token)
+        token = microsoft.refresh_msa_token(
+            client_id,
+            refresh_token,
+            authority=str(record.get("authority") or getattr(config, "msa_authority", "consumers")),
+        )
         session = microsoft.login_with_msa(token)
         record.update(
             access_token=session.access_token,

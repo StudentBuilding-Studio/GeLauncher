@@ -20,9 +20,10 @@ from gelauncher.core import microsoft
 
 
 class MicrosoftLoginDialog(tk.Toplevel):
-    def __init__(self, master: tk.Misc, client_id: str) -> None:
+    def __init__(self, master: tk.Misc, client_id: str, authority: str = "consumers") -> None:
         super().__init__(master)
         self.client_id = client_id
+        self.authority = authority or "consumers"
         self.result: dict | None = None
         self.messages: queue.Queue[tuple] = queue.Queue()
         self._cancelled = False
@@ -86,7 +87,22 @@ class MicrosoftLoginDialog(tk.Toplevel):
 
         def work() -> None:
             try:
-                device = microsoft.start_device_flow(self.client_id)
+                device = None
+                errors: list[str] = []
+                order = [self.authority] + [
+                    item for item in microsoft.AUTHORITIES if item != self.authority
+                ]
+                for authority in order:
+                    try:
+                        device = microsoft.start_device_flow(self.client_id, authority)
+                        self.authority = authority
+                        break
+                    except microsoft.MSAuthError as exc:
+                        errors.append(f"{authority}: {exc}")
+                if device is None:
+                    raise microsoft.MSAuthError(
+                        "两种登录端点都没成功：\n" + "\n".join(errors)
+                    )
                 self.messages.put(("device", device))
                 token = microsoft.poll_device_token(
                     self.client_id,
@@ -95,7 +111,7 @@ class MicrosoftLoginDialog(tk.Toplevel):
                 )
                 self.messages.put(("status", "正在登录 Xbox Live…"))
                 session = microsoft.login_with_msa(token)
-                self.messages.put(("success", (token, session)))
+                self.messages.put(("success", (token, session, self.authority)))
             except microsoft.MinecraftNotFound as exc:
                 self.messages.put(("error", str(exc)))
             except microsoft.MSAuthError as exc:
@@ -118,13 +134,14 @@ class MicrosoftLoginDialog(tk.Toplevel):
                 elif kind == "status":
                     self.status_var.set(payload)
                 elif kind == "success":
-                    token, session = payload
+                    token, session, authority = payload
                     self.result = microsoft.account_record(
                         name=session.name,
                         uuid=session.uuid,
                         refresh_token=token.refresh_token,
                         access_token=session.access_token,
                         expires_at=session.expires_at,
+                        authority=authority,
                     )
                     self.status_var.set(f"登录成功：{session.name}")
                     self.destroy()
@@ -154,7 +171,7 @@ class MicrosoftLoginDialog(tk.Toplevel):
         self.destroy()
 
 
-def login_microsoft(master: tk.Misc, client_id: str) -> dict | None:
-    dialog = MicrosoftLoginDialog(master, client_id)
+def login_microsoft(master: tk.Misc, client_id: str, authority: str = "consumers") -> dict | None:
+    dialog = MicrosoftLoginDialog(master, client_id, authority)
     master.wait_window(dialog)
     return dialog.result

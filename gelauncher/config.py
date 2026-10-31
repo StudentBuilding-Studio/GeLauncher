@@ -73,6 +73,8 @@ class Config:
     selected_account_type: str = "offline"
     #: 微软登录用的 Azure 应用 client id（见 docs/微软登录准备.md）
     msa_client_id: str = ""
+    #: 登录端点：个人账号 consumers；组织租户（Power Apps/学生/朋友的 Azure）用 common
+    msa_authority: str = "consumers"
     #: 已登录的微软账号：[{type,name,uuid,refresh_token,access_token,expires_at,xuid}]
     msa_accounts: list[dict[str, Any]] = field(default_factory=list)
 
@@ -144,6 +146,9 @@ class Config:
             self.username = self.selected_account
         if not isinstance(self.instances, dict):
             self.instances = {}
+
+        if self.msa_authority not in ("consumers", "common"):
+            self.msa_authority = "consumers"
 
         # 目录列表：统一分隔符、去重，并保证当前目录排在最前面
         dirs = [d for d in (self.game_dirs or []) if isinstance(d, str) and d.strip()]
