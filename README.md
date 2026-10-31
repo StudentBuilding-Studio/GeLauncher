@@ -78,6 +78,13 @@ python -m gelauncher ui --game-dir D:\Minecraft\.minecraft   # 临时换目录
 - 只有离线账号（不联机就不需要正版验证）。
 - 还没做 UI 和打包。
 
+## 账号
+
+- **离线账号**：给个名字就能用（UUID 由名字算出），适合几个人本机玩
+- **微软账号**：登录后可以联机、显示正版皮肤。走设备代码流，登录前需要在 Azure 注册一个应用拿到
+  client id，步骤和"没有信用卡怎么办"都写在 **[docs/微软登录准备.md](docs/微软登录准备.md)**
+  （文件绝对路径：`D:\git\GeLauncher\docs\微软登录准备.md`）
+
 ## 开发
 
 ```bash
