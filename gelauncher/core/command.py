@@ -25,17 +25,43 @@ PLACEHOLDER_RE = re.compile(r"\$\{([^}]+)\}")
 
 @dataclass(frozen=True)
 class Account:
-    """离线账号。不联机就不需要微软登录（方案第 0 节）。"""
+    """启动用的账号。
+
+    离线账号：只给名字，UUID 由 :func:`offline_uuid` 算出来；
+    微软账号：UUID / access_token / xuid 都来自登录结果，``user_type="msa"``。
+    """
 
     name: str = "Player"
+    uuid: str | None = None
     user_type: str = "legacy"
     access_token: str = "0"
     client_id: str = ""
     xuid: str = ""
 
     @property
-    def uuid(self) -> str:
-        return offline_uuid(self.name)
+    def resolved_uuid(self) -> str:
+        return self.uuid or offline_uuid(self.name)
+
+    @property
+    def is_microsoft(self) -> bool:
+        return self.user_type == "msa"
+
+    @classmethod
+    def offline(cls, name: str) -> "Account":
+        return cls(name=name)
+
+    @classmethod
+    def microsoft(
+        cls, name: str, uuid: str, access_token: str, xuid: str = "", client_id: str = ""
+    ) -> "Account":
+        return cls(
+            name=name,
+            uuid=uuid,
+            user_type="msa",
+            access_token=access_token,
+            xuid=xuid,
+            client_id=client_id,
+        )
 
 
 def offline_uuid(name: str) -> str:
@@ -88,9 +114,9 @@ def build_placeholders(
 ) -> Placeholders:
     values: dict[str, str] = {
         "auth_player_name": account.name,
-        "auth_uuid": account.uuid,
+        "auth_uuid": account.resolved_uuid,
         "auth_access_token": account.access_token,
-        "auth_session": f"token:{account.access_token}:{account.uuid}",
+        "auth_session": f"token:{account.access_token}:{account.resolved_uuid}",
         "clientid": account.client_id,
         "auth_xuid": account.xuid,
         "user_type": account.user_type,

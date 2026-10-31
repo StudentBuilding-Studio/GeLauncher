@@ -69,6 +69,12 @@ class Config:
     # ---- 账号 ----
     accounts: list[str] = field(default_factory=lambda: ["Player"])
     selected_account: str = "Player"
+    #: "offline" 或 "msa"
+    selected_account_type: str = "offline"
+    #: 微软登录用的 Azure 应用 client id（见 docs/微软登录准备.md）
+    msa_client_id: str = ""
+    #: 已登录的微软账号：[{type,name,uuid,refresh_token,access_token,expires_at,xuid}]
+    msa_accounts: list[dict[str, Any]] = field(default_factory=list)
 
     # ---- 实例 ----
     instances: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -111,9 +117,30 @@ class Config:
         self.accounts = [name for name in (self.accounts or []) if isinstance(name, str) and name.strip()]
         if not self.accounts:
             self.accounts = ["Player"]
-        if self.selected_account not in self.accounts:
+
+        # 微软账号：去掉没名字/没 refresh token 的坏记录
+        cleaned_msa = []
+        for entry in self.msa_accounts or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                continue
+            cleaned_msa.append(dict(entry, type="msa", name=name))
+        self.msa_accounts = cleaned_msa
+
+        self.selected_account_type = (
+            "msa" if self.selected_account_type == "msa" else "offline"
+        )
+        if not self._account_exists(self.selected_account, self.selected_account_type):
+            self.selected_account_type = "offline"
             self.selected_account = self.accounts[0]
-        if self.username not in self.accounts:
+            if self.msa_accounts and not self.accounts:
+                self.selected_account_type = "msa"
+                self.selected_account = self.msa_accounts[0]["name"]
+        if self.username not in self.accounts and not self._account_exists(
+            self.username, "msa"
+        ):
             self.username = self.selected_account
         if not isinstance(self.instances, dict):
             self.instances = {}
@@ -198,29 +225,101 @@ class Config:
 
     # ---------------------------------------------------------------- 账号
 
+    def _account_exists(self, name: str, kind: str) -> bool:
+        if not name:
+            return False
+        if kind == "msa":
+            return any(entry.get("name") == name for entry in self.msa_accounts)
+        return name in self.accounts
+
+    def msa_account(self, name: str) -> dict[str, Any] | None:
+        for entry in self.msa_accounts:
+            if entry.get("name") == name:
+                return entry
+        return None
+
+    def account_entries(self) -> list[dict[str, Any]]:
+        """给界面用的统一列表：离线在前，微软在后。"""
+        entries = [
+            {"kind": "offline", "name": name, "uuid": "", "detail": "离线"}
+            for name in self.accounts
+        ]
+        entries.extend(
+            {
+                "kind": "msa",
+                "name": entry.get("name", ""),
+                "uuid": entry.get("uuid", ""),
+                "detail": "微软",
+            }
+            for entry in self.msa_accounts
+        )
+        return entries
+
+    def current_account(self) -> dict[str, Any]:
+        if self.selected_account_type == "msa":
+            entry = self.msa_account(self.selected_account) or {}
+            return {
+                "kind": "msa",
+                "name": self.selected_account,
+                "uuid": entry.get("uuid", ""),
+            }
+        return {"kind": "offline", "name": self.selected_account, "uuid": ""}
+
     def add_account(self, name: str) -> bool:
+        """添加离线账号，并设为当前。"""
         name = name.strip()
         if not name or name in self.accounts:
             return False
         self.accounts.append(name)
-        self.select_account(name)
+        self.select_account(name, "offline")
+        return True
+
+    def add_msa_account(self, record: dict[str, Any]) -> bool:
+        """添加/更新微软账号（同名覆盖），并设为当前。"""
+        name = str(record.get("name") or "").strip()
+        if not name:
+            return False
+        cleaned = dict(record, type="msa", name=name)
+        for index, entry in enumerate(self.msa_accounts):
+            if entry.get("name") == name or (
+                entry.get("uuid") and entry.get("uuid") == cleaned.get("uuid")
+            ):
+                self.msa_accounts[index] = cleaned
+                break
+        else:
+            self.msa_accounts.append(cleaned)
+        self.select_account(name, "msa")
         return True
 
     def remove_account(self, name: str) -> bool:
+        """删除离线账号（保留旧接口语义）。"""
         if name not in self.accounts:
             return False
         self.accounts.remove(name)
         if not self.accounts:
             self.accounts = ["Player"]
-        if self.selected_account == name:
-            self.selected_account = self.accounts[0]
+        if self.selected_account == name and self.selected_account_type == "offline":
+            self.select_account(self.accounts[0], "offline")
         self.username = self.selected_account
         return True
 
-    def select_account(self, name: str) -> bool:
-        if name not in self.accounts:
+    def remove_msa_account(self, name: str) -> bool:
+        before = len(self.msa_accounts)
+        self.msa_accounts = [e for e in self.msa_accounts if e.get("name") != name]
+        if len(self.msa_accounts) == before:
+            return False
+        if self.selected_account == name and self.selected_account_type == "msa":
+            self.selected_account_type = "offline"
+            self.selected_account = self.accounts[0]
+            self.username = self.selected_account
+        return True
+
+    def select_account(self, name: str, kind: str = "offline") -> bool:
+        kind = "msa" if kind == "msa" else "offline"
+        if not self._account_exists(name, kind):
             return False
         self.selected_account = name
+        self.selected_account_type = kind
         self.username = name
         return True
 

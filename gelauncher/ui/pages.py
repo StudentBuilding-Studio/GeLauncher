@@ -510,11 +510,12 @@ class AccountsPage(Page):
         super().__init__(parent, app)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
+        self._entries: dict[str, dict] = {}
 
         header = ttk.Frame(self)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
-        ttk.Label(header, text="离线账号", font=("Microsoft YaHei UI", 11, "bold")).grid(
+        ttk.Label(header, text="账号", font=("Microsoft YaHei UI", 11, "bold")).grid(
             row=0, column=0, sticky="w"
         )
         self.current_var = tk.StringVar(value="")
@@ -524,94 +525,160 @@ class AccountsPage(Page):
 
         body = ttk.Frame(self)
         body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=2)
-        body.columnconfigure(1, weight=1)
+        body.columnconfigure(0, weight=1)
+        body.columnconfigure(1, weight=0, minsize=230)
         body.rowconfigure(0, weight=1)
 
-        tree_frame = ttk.LabelFrame(body, text="账号列表", padding=6)
+        tree_frame = ttk.LabelFrame(body, text="已添加的账号（● 表示当前）", padding=6)
         tree_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         tree_frame.columnconfigure(0, weight=1)
         tree_frame.rowconfigure(0, weight=1)
 
-        self.tree = ttk.Treeview(tree_frame, columns=("uuid",), show="tree headings", selectmode="browse")
-        self.tree.heading("#0", text="玩家名")
-        self.tree.heading("uuid", text="离线 UUID")
-        self.tree.column("#0", width=180)
+        self.tree = ttk.Treeview(
+            tree_frame, columns=("type", "uuid"), show="tree headings", selectmode="browse"
+        )
+        self.tree.heading("#0", text="账号")
+        self.tree.heading("type", text="类型")
+        self.tree.heading("uuid", text="UUID")
+        self.tree.column("#0", width=180, stretch=True)
+        self.tree.column("type", width=70, anchor="center", stretch=False)
         self.tree.column("uuid", width=280)
         self.tree.grid(row=0, column=0, sticky="nsew")
         scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scroll.set)
+        self.tree.bind("<Double-1>", self._on_double_click)
 
-        editor = ttk.LabelFrame(body, text="新增 / 选择", padding=10)
-        editor.grid(row=0, column=1, sticky="nsew")
-        editor.columnconfigure(0, weight=1)
+        actions = ttk.LabelFrame(body, text="操作", padding=10)
+        actions.grid(row=0, column=1, sticky="nsew")
+        actions.columnconfigure(0, weight=1)
 
-        ttk.Label(editor, text="玩家名").grid(row=0, column=0, sticky="w")
-        self.name_var = tk.StringVar()
-        name_entry = ttk.Entry(editor, textvariable=self.name_var)
-        name_entry.grid(row=1, column=0, sticky="ew", pady=(2, 8))
-        name_entry.bind("<Return>", lambda _e: self.add())
+        self.add_button = ttk.Menubutton(actions, text="添加账号 ▾")
+        self.add_menu = tk.Menu(self.add_button, tearoff=False)
+        self.add_menu.add_command(label="微软账号…", command=self.add_microsoft)
+        self.add_menu.add_command(label="离线账号…", command=self.add_offline)
+        self.add_button["menu"] = self.add_menu
+        self.add_button.grid(row=0, column=0, sticky="ew")
 
-        ttk.Button(editor, text="添加并设为当前", command=self.add).grid(row=2, column=0, sticky="ew")
-        ttk.Button(editor, text="设为当前", command=self.use_selected).grid(
-            row=3, column=0, sticky="ew", pady=(6, 0)
+        ttk.Button(actions, text="设为当前账号", command=self.use_selected).grid(
+            row=1, column=0, sticky="ew", pady=(8, 0)
         )
-        ttk.Button(editor, text="删除", command=self.remove).grid(row=4, column=0, sticky="ew", pady=(6, 0))
+        ttk.Button(actions, text="删除选中账号", command=self.remove_selected).grid(
+            row=2, column=0, sticky="ew", pady=(6, 0)
+        )
+
+        ttk.Separator(actions).grid(row=3, column=0, sticky="ew", pady=12)
         ttk.Label(
-            editor,
-            text="离线账号只影响游戏里的名字和 UUID；\n不联机就不需要微软登录。",
+            actions,
+            text=(
+                "微软账号：登录后可以联机、显示正版皮肤。\n"
+                "离线账号：只在本地用，名字和 UUID 自己定。\n\n"
+                "微软登录需要在 Azure 注册一个应用，\n"
+                "步骤见 docs/微软登录准备.md。"
+            ),
             foreground="#666",
             justify="left",
-        ).grid(row=5, column=0, sticky="w", pady=(12, 0))
+            wraplength=210,
+        ).grid(row=4, column=0, sticky="w")
+
+    # ------------------------------------------------------------------
 
     def on_show(self) -> None:
         self.refresh()
 
     def refresh(self) -> None:
-        self.tree.delete(*self.tree.get_children())
-        from gelauncher.core.command import offline_uuid
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+        self._entries.clear()
 
         config = self.app.config
-        for name in config.accounts:
-            marker = "（当前）" if name == config.selected_account else ""
-            self.tree.insert("", "end", iid=name, text=name + marker, values=(offline_uuid(name),))
-        self.current_var.set(f"当前账号：{config.selected_account}")
-        if config.selected_account in self.tree.get_children():
-            self.tree.selection_set(config.selected_account)
+        current = config.current_account()
+        for entry in config.account_entries():
+            key = f"{entry['kind']}|{entry['name']}"
+            self._entries[key] = entry
+            is_current = (
+                entry["kind"] == current["kind"] and entry["name"] == current["name"]
+            )
+            uuid_text = entry["uuid"] or "（离线 UUID 由名字算出）"
+            self.tree.insert(
+                "",
+                "end",
+                iid=key,
+                text=("● " if is_current else "") + entry["name"],
+                values=(entry["detail"], uuid_text),
+            )
+        config_kind = "微软账号" if current["kind"] == "msa" else "离线账号"
+        self.current_var.set(f"当前：{current['name']}（{config_kind}）")
+        for key, entry in self._entries.items():
+            if entry["kind"] == current["kind"] and entry["name"] == current["name"]:
+                self.tree.selection_set(key)
+                self.tree.see(key)
 
-    def add(self) -> None:
-        name = self.name_var.get().strip()
+    def _selected_entry(self) -> dict | None:
+        selection = self.tree.selection()
+        if not selection:
+            return None
+        return self._entries.get(selection[0])
+
+    def _on_double_click(self, event) -> None:
+        if self.tree.identify_region(event.x, event.y) in ("tree", "cell"):
+            self.use_selected()
+
+    # ------------------------------------------------------------------ 添加
+
+    def add_offline(self) -> None:
+        from tkinter import simpledialog
+
+        name = simpledialog.askstring("离线账号", "玩家名（游戏里显示的名字）：", parent=self)
         if not name:
             return
+        name = name.strip()
         if not self.app.config.add_account(name):
-            messagebox.showinfo("重复了", f"账号 {name} 已经在列表里")
+            messagebox.showinfo("重复了", f"离线账号 {name} 已经在列表里")
             return
         self.app.config.save()
-        self.name_var.set("")
         self.refresh()
-        self.app.set_status(f"已添加账号 {name}，并设为当前账号")
+        self.app.set_status(f"已添加离线账号 {name}，并设为当前账号")
+
+    def add_microsoft(self) -> None:
+        from gelauncher.ui.msa_login import login_microsoft
+
+        record = login_microsoft(self, self.app.config.msa_client_id)
+        if not record:
+            return
+        self.app.config.add_msa_account(record)
+        self.app.config.save()
+        self.refresh()
+        self.app.set_status(f"已登录微软账号 {record.get('name')}")
+
+    # ------------------------------------------------------------------ 选择 / 删除
 
     def use_selected(self) -> None:
-        selection = self.tree.selection()
-        if not selection:
+        entry = self._selected_entry()
+        if entry is None:
             return
-        self.app.config.select_account(selection[0])
+        if not self.app.config.select_account(entry["name"], entry["kind"]):
+            return
         self.app.config.save()
         self.refresh()
-        self.app.set_status(f"当前账号：{selection[0]}")
+        self.app.set_status(f"当前账号：{entry['name']}")
 
-    def remove(self) -> None:
-        selection = self.tree.selection()
-        if not selection:
+    def remove_selected(self) -> None:
+        entry = self._selected_entry()
+        if entry is None:
             return
-        name = selection[0]
-        if not messagebox.askyesno("删除账号", f"删掉离线账号 {name}？"):
+        name = entry["name"]
+        kind = entry["kind"]
+        label = "微软账号" if kind == "msa" else "离线账号"
+        if not messagebox.askyesno("删除账号", f"删掉{label} {name}？"):
             return
-        self.app.config.remove_account(name)
+        if kind == "msa":
+            self.app.config.remove_msa_account(name)
+        else:
+            self.app.config.remove_account(name)
         self.app.config.save()
         self.refresh()
-        self.app.set_status(f"已删除账号 {name}，当前账号 {self.app.config.selected_account}")
+        self.app.set_status(f"已删除{label} {name}")
 
 
 # --------------------------------------------------------------------------- #
@@ -674,6 +741,18 @@ class SettingsPage(Page):
             general, text="默认在启动时打开独立日志窗口", variable=self.log_window_var
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+        ttk.Label(general, text="微软 client id").grid(row=3, column=0, sticky="w", pady=3)
+        self.client_id_var = tk.StringVar()
+        ttk.Entry(general, textvariable=self.client_id_var).grid(
+            row=3, column=1, sticky="ew", pady=3
+        )
+        ttk.Label(
+            general,
+            text="用微软账号登录前要填这个，注册步骤见 docs/微软登录准备.md",
+            foreground="#666",
+            wraplength=520,
+        ).grid(row=4, column=0, columnspan=2, sticky="w")
+
         ttk.Button(body, text="保存设置", command=self.save).grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
         env = ttk.LabelFrame(body, text="环境", padding=10)
@@ -697,6 +776,7 @@ class SettingsPage(Page):
         self.memory_var.set(str(config.max_memory_mb))
         self.java_var.set(config.java_path)
         self.log_window_var.set(bool(config.show_log_window))
+        self.client_id_var.set(config.msa_client_id)
         self.refresh_java_choices()
         env = current_env()
         self.env_var.set(f"系统：{env.os_name} / {env.arch}   游戏目录：{self.app.layout.root}")
@@ -743,5 +823,6 @@ class SettingsPage(Page):
             return
         config.java_path = self.java_var.get().strip()
         config.show_log_window = bool(self.log_window_var.get())
+        config.msa_client_id = self.client_id_var.get().strip()
         config.save()
         self.app.set_status("设置已保存")

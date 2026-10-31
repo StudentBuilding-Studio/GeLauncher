@@ -35,6 +35,27 @@ def test_accounts_add_select_remove():
     assert config.selected_account == "Player"
 
 
+def test_msa_account_management():
+    config = Config()
+    record = {"name": "Steve", "uuid": "uuid-1", "refresh_token": "R"}
+    assert config.add_msa_account(record) is True
+    assert config.selected_account == "Steve"
+    assert config.selected_account_type == "msa"
+    assert config.current_account() == {"kind": "msa", "name": "Steve", "uuid": "uuid-1"}
+
+    kinds = {entry["kind"] for entry in config.account_entries()}
+    assert kinds == {"offline", "msa"}
+
+    # 同名再登录一次是"更新"，不是重复添加
+    assert config.add_msa_account(dict(record, refresh_token="R2")) is True
+    assert len(config.msa_accounts) == 1
+    assert config.msa_account("Steve")["refresh_token"] == "R2"
+
+    assert config.remove_msa_account("Steve") is True
+    assert config.selected_account_type == "offline"
+    assert config.selected_account in config.accounts
+
+
 def test_instance_settings_fall_back_to_global():
     config = Config(max_memory_mb=3072, java_path=r"C:\jdk\java.exe", show_log_window=False)
     merged = config.instance("whatever")

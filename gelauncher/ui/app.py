@@ -20,6 +20,7 @@ from tkinter import messagebox, ttk
 
 from gelauncher import __version__
 from gelauncher.config import Config
+from gelauncher.core import microsoft
 from gelauncher.core.command import Account
 from gelauncher.core.install_loader import install_fabric, install_forge
 from gelauncher.core.install_vanilla import install_version
@@ -226,20 +227,22 @@ class LauncherApp:
         if window is not None:
             window.set_status("准备启动…")
 
-        account_name = self.config.selected_account or self.config.username or "Player"
-        options = LaunchOptions(
-            layout=self.layout,
-            version_id=version_id,
-            account=Account(name=account_name),
-            java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
-            max_memory_mb=int(settings["max_memory_mb"]),
-            width=settings.get("width"),
-            height=settings.get("height"),
-        )
+        def build_options(account) -> LaunchOptions:
+            return LaunchOptions(
+                layout=self.layout,
+                version_id=version_id,
+                account=account,
+                java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
+                max_memory_mb=int(settings["max_memory_mb"]),
+                width=settings.get("width"),
+                height=settings.get("height"),
+            )
 
         def work() -> None:
             try:
-                plan = prepare(options)
+                self.messages.put(("log", version_id, f"[LAUNCHER] 账号：{self.config.selected_account}"))
+                account = self.designated_account()
+                plan = prepare(build_options(account))
                 for warning in plan.warnings:
                     self.messages.put(("log", version_id, f"[WARN] {warning}"))
                 log_path = self.layout.root / "logs" / f"gelauncher-{version_id}.log"
@@ -302,12 +305,52 @@ class LauncherApp:
                 break
         return chain
 
+    def designated_account(self) -> Account:
+        """本次启动用的账号。微软账号会确保 token 有效（必要时自动刷新）。"""
+        config = self.config
+        if config.selected_account_type != "msa":
+            return Account.offline(config.selected_account or "Player")
+
+        record = config.msa_account(config.selected_account)
+        if record is None:
+            raise RuntimeError(f"找不到微软账号 {config.selected_account}，去账号页重新登录")
+
+        session = microsoft.session_from_record(record)
+        if session is None:
+            if not config.msa_client_id:
+                raise RuntimeError("微软账号需要 client id 才能刷新登录，见 docs/微软登录准备.md")
+            token = microsoft.refresh_msa_token(
+                config.msa_client_id, str(record.get("refresh_token") or "")
+            )
+            session = microsoft.login_with_msa(token)
+            record.update(
+                access_token=session.access_token,
+                expires_at=session.expires_at,
+                name=session.name,
+                uuid=session.uuid,
+                refresh_token=token.refresh_token,
+            )
+            config.add_msa_account(record)
+            config.save()
+
+        return Account.microsoft(
+            name=session.name,
+            uuid=session.uuid,
+            access_token=session.access_token,
+            xuid=str(record.get("xuid") or ""),
+            client_id=config.msa_client_id,
+        )
+
     def print_command(self, version_id: str) -> None:
         settings = self.config.instance(version_id)
+        try:
+            account = self.designated_account()
+        except Exception:  # noqa: BLE001 - 只是打印命令，别因为登录拦住
+            account = Account.offline(self.config.selected_account or "Player")
         options = LaunchOptions(
             layout=self.layout,
             version_id=version_id,
-            account=Account(name=self.config.selected_account or "Player"),
+            account=account,
             java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
             max_memory_mb=int(settings["max_memory_mb"]),
             dry_run=True,

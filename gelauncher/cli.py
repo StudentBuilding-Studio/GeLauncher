@@ -384,6 +384,10 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
             config.width = int(args.value)
         elif args.key == "height":
             config.height = int(args.value)
+        elif args.key == "msa-client-id":
+            config.msa_client_id = args.value
+        elif args.key == "show-log-window":
+            config.show_log_window = str(args.value).lower() in ("1", "true", "yes", "on")
         else:
             print(f"不认识的配置项：{args.key}", file=sys.stderr)
             return 2
@@ -392,6 +396,9 @@ def cmd_config(args: argparse.Namespace, config: Config) -> int:
     print(f"游戏目录  : {config.game_dir}")
     print(f"Java      : {config.java_path or '（自动查找）'}")
     print(f"玩家名    : {config.username}")
+    print(f"账号类型  : {'微软' if config.selected_account_type == 'msa' else '离线'}")
+    print(f"微软中已登录: {len(config.msa_accounts)} 个")
+    print(f"微软 client id: {config.msa_client_id or '（未配置，见 docs/微软登录准备.md）'}")
     print(f"最大内存  : {config.max_memory_mb} MB")
     print(f"窗口尺寸  : {config.width or '默认'} x {config.height or '默认'}")
     return 0

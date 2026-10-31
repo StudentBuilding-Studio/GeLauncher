@@ -44,7 +44,36 @@ def test_offline_uuid_is_stable_and_v3():
 def test_account_defaults():
     account = Account()
     assert account.name == "Player"
-    assert account.uuid == offline_uuid("Player")
+    assert account.resolved_uuid == offline_uuid("Player")
+    assert account.user_type == "legacy"
+
+
+def test_microsoft_account_uses_real_uuid_and_token():
+    account = Account.microsoft(
+        name="Steve", uuid="069a79f4-44e9-4726-a5be-fca90e38aaf5", access_token="MC-TOKEN"
+    )
+    assert account.is_microsoft
+    assert account.resolved_uuid == "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+    assert account.user_type == "msa"
+
+    version = VersionJson.load(FIXTURES / "vanilla-1.21.8.json")
+    placeholders = build_placeholders(
+        version=version,
+        version_name="1.21.8",
+        account=account,
+        game_directory="g",
+        assets_root="a",
+        assets_index_name="26",
+        natives_directory="n",
+        library_directory="l",
+        classpath="cp",
+        primary_jar_name="1.21.8.jar",
+        launcher_name="gelauncher",
+        launcher_version="0.1.0",
+    )
+    assert placeholders.substitute("${auth_uuid}") == "069a79f4-44e9-4726-a5be-fca90e38aaf5"
+    assert placeholders.substitute("${auth_access_token}") == "MC-TOKEN"
+    assert placeholders.substitute("${user_type}") == "msa"
 
 
 def test_placeholders_substitute():

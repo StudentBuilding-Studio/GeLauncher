@@ -117,25 +117,62 @@ def test_instance_settings_are_saved_per_version(app, tmp_path: Path):
     assert other["show_log_window"] == app.config.show_log_window
 
 
-def test_accounts_page_manages_accounts(app):
+def test_accounts_page_add_offline_and_select(app, monkeypatch):
+    import tkinter.simpledialog
+
     accounts = app.pages["accounts"]
     app.show_page("accounts")
-    assert "Player" in accounts.tree.get_children()
+    assert "offline|Player" in accounts.tree.get_children()
 
-    accounts.name_var.set("Steve")
-    accounts.add()
+    monkeypatch.setattr(tkinter.simpledialog, "askstring", lambda *a, **k: "Steve")
+    accounts.add_offline()
+
     assert "Steve" in app.config.accounts
     assert app.config.selected_account == "Steve"
-    assert "Steve" in accounts.tree.get_children()
+    assert app.config.selected_account_type == "offline"
+    row_text = accounts.tree.item("offline|Steve", "text")
+    assert row_text.startswith("●")
 
-    accounts.tree.selection_set("Player")
+    accounts.tree.selection_set("offline|Player")
     accounts.use_selected()
     assert app.config.selected_account == "Player"
+    assert accounts.tree.item("offline|Player", "text").startswith("●")
 
-    accounts.tree.selection_set("Steve")
-    accounts.remove()
+    accounts.tree.selection_set("offline|Steve")
+    accounts.remove_selected()
     assert "Steve" not in app.config.accounts
     assert app.config.selected_account in app.config.accounts
+
+
+def test_accounts_page_add_microsoft(app, monkeypatch):
+    from gelauncher.ui import msa_login
+
+    record = {
+        "type": "msa",
+        "name": "MSPlayer",
+        "uuid": "uuid-ms",
+        "refresh_token": "R",
+        "access_token": "A",
+        "expires_at": 0,
+    }
+    monkeypatch.setattr(msa_login, "login_microsoft", lambda master, client_id: record)
+
+    accounts = app.pages["accounts"]
+    app.show_page("accounts")
+    accounts.add_microsoft()
+
+    assert app.config.selected_account == "MSPlayer"
+    assert app.config.selected_account_type == "msa"
+    assert app.config.msa_account("MSPlayer") is not None
+    assert "msa|MSPlayer" in accounts.tree.get_children()
+    assert accounts.tree.item("msa|MSPlayer", "text").startswith("●")
+    assert accounts.tree.item("msa|MSPlayer", "values")[0] == "微软"
+
+
+def test_account_entries_list_both_kinds(app):
+    app.config.add_msa_account({"name": "MSPlayer", "uuid": "u", "refresh_token": "r"})
+    entries = app.config.account_entries()
+    assert {entry["kind"] for entry in entries} == {"offline", "msa"}
 
 
 def test_settings_page_saves_defaults(app):
