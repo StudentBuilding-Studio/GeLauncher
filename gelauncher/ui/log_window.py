@@ -24,6 +24,7 @@ class LogWindow(tk.Toplevel):
         super().__init__(master)
         self.version_id = version_id
         self.log_path = log_path
+        self._handle = None
         self.title(f"日志 - {version_id}")
         self.geometry("900x480")
         self.minsize(560, 280)
@@ -82,6 +83,29 @@ class LogWindow(tk.Toplevel):
         if self.autoscroll.get():
             self.text.see("end")
         self.text.configure(state="disabled")
+        self._write_file(line)
+
+    def _write_file(self, line: str) -> None:
+        """日志窗口的内容也落盘，出问题时能翻记录（安装日志以前只存在内存里）。"""
+        if self.log_path is None:
+            return
+        try:
+            if self._handle is None:
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                self._handle = self.log_path.open("a", encoding="utf-8")
+            self._handle.write(line + "\n")
+            self._handle.flush()
+        except OSError:
+            self._handle = None
+
+    def destroy(self) -> None:
+        if self._handle is not None:
+            try:
+                self._handle.close()
+            except OSError:
+                pass
+            self._handle = None
+        super().destroy()
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)

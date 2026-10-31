@@ -74,6 +74,10 @@ class VersionsPage(Page):
         ttk.Label(header, text="版本", font=("Microsoft YaHei UI", 11, "bold")).grid(
             row=0, column=0, sticky="w"
         )
+        self.dir_hint_var = tk.StringVar(value="")
+        ttk.Label(header, textvariable=self.dir_hint_var, foreground="#666").grid(
+            row=0, column=1, sticky="w", padx=10
+        )
         ttk.Label(header, text="过滤").grid(row=0, column=2, padx=(0, 4))
         entry = ttk.Entry(header, textvariable=self.filter_var, width=18)
         entry.grid(row=0, column=3)
@@ -215,9 +219,10 @@ class VersionsPage(Page):
         if version_id:
             self.app.install_vanilla(version_id.strip())
 
-    def refresh(self) -> None:
+    def refresh(self, select: str | None = None) -> None:
         self.tree.delete(*self.tree.get_children())
         layout = self.app.layout
+        self.dir_hint_var.set(f"当前目录：{layout.root}")
         if not layout.root.is_dir():
             self.app.set_status(f"游戏目录不存在：{layout.root}")
             return
@@ -246,6 +251,10 @@ class VersionsPage(Page):
         self.app.set_status(
             f"{layout.root} · {env.os_name}/{env.arch} · 共 {count} 个版本"
         )
+        # 刚装完的版本要能一眼看到：选中并滚到它
+        if select and select in self.tree.get_children():
+            self.tree.selection_set(select)
+            self.tree.see(select)
 
     # ---------------------------------------------------------------- 二级页
 
@@ -364,12 +373,14 @@ class VersionsPage(Page):
         ttk.Button(buttons, text="打印启动命令", command=self._print_command).grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
-        ttk.Button(buttons, text="给这个版本装 Fabric", command=lambda: self._install_loader("fabric")).grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        self.fabric_button = ttk.Button(
+            buttons, text="给这个版本装 Fabric", command=lambda: self._install_loader("fabric")
         )
-        ttk.Button(buttons, text="给这个版本装 Forge", command=lambda: self._install_loader("forge")).grid(
-            row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        self.fabric_button.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.forge_button = ttk.Button(
+            buttons, text="给这个版本装 Forge", command=lambda: self._install_loader("forge")
         )
+        self.forge_button.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
     # ---------------------------------------------------------------- 二级页动作
 
@@ -404,6 +415,17 @@ class VersionsPage(Page):
         self.info_vars["库"].set(str(len(version.libraries)))
         self.info_vars["隔离目录"].set(str(self.app.layout.version_dir(version_id)))
         self.detail_status.set(f"Java {version.java_version or '?'}")
+        # 已经是某个加载器的版本：对应按钮就没意义了（点了只会原地重装）
+        is_fabric = version_id.startswith("fabric-loader-")
+        is_forge = "-forge-" in version_id
+        self.fabric_button.configure(
+            state="disabled" if is_fabric else "normal",
+            text="这已经是 Fabric 版本" if is_fabric else "给这个版本装 Fabric",
+        )
+        self.forge_button.configure(
+            state="disabled" if is_forge else "normal",
+            text="这已经是 Forge 版本" if is_forge else "给这个版本装 Forge",
+        )
         self.refresh_java_choices()
         self._refresh_running_state()
 

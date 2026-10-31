@@ -341,6 +341,7 @@ class LauncherApp:
         if not messagebox.askyesno(f"装 {name}", f"给 {base_version} 装 {name}？"):
             return
         log_window = self.open_log_window(base_version)
+        log_window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
         log_window.set_status(f"安装 {name}…")
 
         def progress(stage: str, message: str) -> None:
@@ -353,8 +354,10 @@ class LauncherApp:
                 else:
                     report = install_forge(self.layout, base_version, progress=progress)
                 self.messages.put(("log", base_version, f"[LAUNCHER] 装好了：{report.version_id}"))
-                self.messages.put(("status", f"{name} 装好了：{report.version_id}"))
-                self.messages.put(("refresh", None))
+                self.messages.put(
+                    ("status", f"{name} 装好了：{report.version_id}（{self.layout.root}）")
+                )
+                self.messages.put(("refresh", report.version_id))
             except Exception as exc:  # noqa: BLE001
                 self.messages.put(("log", base_version, f"[ERROR] {name} 安装失败：{exc}"))
                 self.messages.put(("error", f"{name} 安装失败：{exc}"))
@@ -365,6 +368,7 @@ class LauncherApp:
 
     def install_vanilla(self, version_id: str) -> None:
         window = self.open_log_window(version_id)
+        window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
         window.set_status(f"安装 {version_id}…")
 
         def progress(stage: str, done: int, total: int, message: str) -> None:
@@ -382,7 +386,7 @@ class LauncherApp:
                     ("log", version_id, f"[LAUNCHER] 安装完成：下载 {report.downloads.downloaded} 个文件")
                 )
                 self.messages.put(("status", f"{version_id} 安装完成"))
-                self.messages.put(("refresh", None))
+                self.messages.put(("refresh", report.version_id))
             except Exception as exc:  # noqa: BLE001
                 self.messages.put(("log", version_id, f"[ERROR] 安装失败：{exc}"))
                 self.messages.put(("error", f"安装失败：{exc}"))
@@ -522,7 +526,8 @@ class LauncherApp:
                         page.stop_button.configure(state="disabled")
                     self.processes.pop(message[1], None)
                 elif kind == "refresh":
-                    self.pages["versions"].refresh()
+                    target = message[1] if len(message) > 1 else None
+                    self.pages["versions"].refresh(target)
                 elif kind == "java_choices":
                     self.detected_javas = list(message[1])
                     for page in self.pages.values():

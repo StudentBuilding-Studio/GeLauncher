@@ -244,6 +244,76 @@ def test_detect_java_fills_dropdown(app, monkeypatch, tmp_path: Path):
     assert str(fake_path) in versions.java_combo.cget("values")
 
 
+def test_install_loader_uses_current_game_dir(app, monkeypatch):
+    """装加载器必须装到"当前目录"，不能装到别的目录去。"""
+    import time
+
+    calls = {}
+
+    class FakeReport:
+        version_id = "fabric-loader-0.99-1.21.8"
+
+    def fake_install(layout, base, progress=None, **kwargs):
+        calls["root"] = str(layout.root)
+        calls["base"] = base
+        return FakeReport()
+
+    monkeypatch.setattr(ui_app, "install_fabric", fake_install)
+
+    app.install_loader("1.21.8", "fabric")
+    deadline = time.time() + 5
+    while time.time() < deadline and "root" not in calls:
+        time.sleep(0.02)
+    assert calls["root"] == str(app.layout.root)
+    assert calls["base"] == "1.21.8"
+
+
+def test_install_loader_logs_target_dir(app, monkeypatch):
+    import time
+
+    class FakeReport:
+        version_id = "fabric-loader-0.99-1.21.8"
+
+    monkeypatch.setattr(ui_app, "install_fabric", lambda *a, **k: FakeReport())
+    app.install_loader("1.21.8", "fabric")
+
+    window = app.log_windows["1.21.8"]
+    deadline = time.time() + 5
+    content = ""
+    while time.time() < deadline:
+        content = window.text.get("1.0", "end")
+        if "装好了" in content:
+            break
+        app._poll()
+        time.sleep(0.02)
+    assert "安装目标目录" in content
+    assert str(app.layout.root) in content
+
+
+def test_log_window_writes_to_disk(app, tmp_path: Path):
+    from gelauncher.ui.log_window import LogWindow
+
+    path = tmp_path / "logs" / "install.log"
+    window = LogWindow(app.root, "demo", log_path=path)
+    window.append("[LAUNCHER] hello")
+    window.append("[ERROR] boom")
+    window.destroy()
+    text = path.read_text(encoding="utf-8")
+    assert "hello" in text and "boom" in text
+
+
+def test_detail_page_disables_loader_button_for_loader_version(app):
+    """已经是 Fabric 版本时，"装 Fabric"按钮要禁掉，避免"原地重装还提示成功"。"""
+    versions = app.pages["versions"]
+    versions.open("fabric-loader-0.20.1-1.21.8")
+    assert str(versions.fabric_button.cget("state")) == "disabled"
+    assert str(versions.forge_button.cget("state")) == "normal"
+
+    versions.open("1.21.8")
+    assert str(versions.fabric_button.cget("state")) == "normal"
+    assert str(versions.forge_button.cget("state")) == "normal"
+
+
 def test_base_mc_version_follows_inherits(app):
     assert app.base_mc_version("fabric-loader-0.20.1-1.21.8") == "1.21.8"
     assert app.base_mc_version("1.21.8") == "1.21.8"
