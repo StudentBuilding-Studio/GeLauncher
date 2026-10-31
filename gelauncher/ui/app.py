@@ -1,154 +1,298 @@
-"""Tkinter 主窗口（方案 M5：列表 / 安装 / 启动 / 日志 / 设置）。
+"""主窗口：左侧一级导航（版本 / 账号 / 设置）+ 内容区 + 状态栏。
 
-约定（方案 §6.1）：这个文件只负责"收集参数 + 调 core + 显示进度"，
-任何解析、下载、拼命令的逻辑都不许写在这里；core 也永远不 import tkinter。
-
-线程模型：Tkinter 只能在主线程更新，所以后台线程只往 ``queue.Queue`` 里丢消息，
-主线程用 ``after()`` 轮询消费。
+相比上一版的变化（按用户要求）：
+- 版本列表单击进入二级页，二级页里放该版本自己的设置（参考 HMCL）；
+- 主窗口不再有常驻日志区，改成"每个游戏进程一个独立日志窗口"，
+  是否自动打开由该版本的设置决定；
+- 玩家名从版本设置里挪走，单独做成"账号"页统一管理。
 """
 
 from __future__ import annotations
 
-import os
 import queue
 import threading
 import tkinter as tk
+import tkinter.font as tkfont
+import traceback
+from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from gelauncher import __version__
-from gelauncher.cli import detect_loader
 from gelauncher.config import Config
 from gelauncher.core.command import Account
 from gelauncher.core.install_loader import install_fabric, install_forge
 from gelauncher.core.install_vanilla import install_version
 from gelauncher.core.java import installed_javas
 from gelauncher.core.launch import LaunchOptions, prepare, run
-from gelauncher.core.layout import GameLayout, current_env
-from gelauncher.core.models import VersionJsonError
+from gelauncher.core.layout import GameLayout
+from gelauncher.ui.log_window import LogWindow
+from gelauncher.ui.pages import AccountsPage, SettingsPage, VersionsPage
+
+NAV_ITEMS = (
+    ("versions", "版本", "📦"),
+    ("accounts", "账号", "👤"),
+    ("settings", "设置", "⚙"),
+)
 
 
 class LauncherApp:
     def __init__(self, root: tk.Tk, config: Config) -> None:
         self.root = root
         self.config = config
+        # 保证当前目录一定在"目录列表"里（第一次用 --game-dir 或配置里缺它时）
+        self.config.add_game_dir(str(config.game_dir_path()))
         self.layout = GameLayout(config.game_dir_path())
         self.messages: queue.Queue[tuple] = queue.Queue()
         self.busy = False
-        self._current_process = None
+        self.processes: dict[str, object] = {}
+        self.log_windows: dict[str, LogWindow] = {}
+        self.crash_log = self.layout.root / "logs" / "gelauncher-ui-crash.log"
+        self.nav_buttons: dict[str, ttk.Button] = {}
 
-        self.game_dir_var = tk.StringVar(value=str(self.layout.root))
-        self.username_var = tk.StringVar(value=config.username)
-        self.memory_var = tk.StringVar(value=str(config.max_memory_mb))
         self.status_var = tk.StringVar(value="就绪")
-        self.java_var = tk.StringVar(value="（自动）")
+        self.root.report_callback_exception = self._on_callback_exception
 
+        self._setup_fonts()
+        self._setup_style()
         self._build()
-        self.refresh_versions()
+        self._restore_geometry()
+        self.show_page("versions")
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(80, self._poll)
+
+    # ---------------------------------------------------------------- 外观
+
+    def _setup_fonts(self) -> None:
+        for name in ("TkDefaultFont", "TkTextFont", "TkMenuFont"):
+            try:
+                tkfont.nametofont(name).configure(size=10, family="Microsoft YaHei UI")
+            except tk.TclError:
+                pass
+        try:
+            tkfont.nametofont("TkFixedFont").configure(size=9)
+        except tk.TclError:
+            pass
+
+    def _setup_style(self) -> None:
+        style = ttk.Style()
+        for theme in ("vista", "clam", "default"):
+            if theme in style.theme_names():
+                style.theme_use(theme)
+                break
+        style.configure("Treeview", rowheight=26)
+        style.configure("Accent.TButton", font=("Microsoft YaHei UI", 10, "bold"))
+        style.configure("Nav.TButton", anchor="w", padding=(12, 8))
+        style.configure("Status.TLabel", padding=(4, 4))
 
     # ---------------------------------------------------------------- 布局
 
     def _build(self) -> None:
         self.root.title(f"Ge 启动器 {__version__}")
-        self.root.geometry("980x640")
-        self.root.minsize(820, 520)
+        self.root.minsize(920, 560)
+        self.root.columnconfigure(1, weight=1)
+        self.root.rowconfigure(0, weight=1)
 
-        outer = ttk.Frame(self.root, padding=8)
-        outer.pack(fill="both", expand=True)
+        sidebar = ttk.Frame(self.root, padding=(10, 12, 6, 8), width=150)
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
+        sidebar.columnconfigure(0, weight=1)
 
-        # 顶部：游戏目录
-        top = ttk.Frame(outer)
-        top.pack(fill="x")
-        ttk.Label(top, text="游戏目录").pack(side="left")
-        ttk.Entry(top, textvariable=self.game_dir_var, state="readonly").pack(
-            side="left", fill="x", expand=True, padx=6
+        ttk.Label(sidebar, text="Ge 启动器", font=("Microsoft YaHei UI", 12, "bold")).grid(
+            row=0, column=0, sticky="w", pady=(0, 14)
         )
-        ttk.Button(top, text="切换…", command=self.choose_game_dir).pack(side="left")
-        ttk.Button(top, text="打开", command=self.open_game_dir).pack(side="left", padx=(4, 0))
+        for index, (key, label, icon) in enumerate(NAV_ITEMS, start=1):
+            button = ttk.Button(
+                sidebar,
+                text=f"{icon}  {label}",
+                style="Nav.TButton",
+                command=lambda name=key: self.show_page(name),
+            )
+            button.grid(row=index, column=0, sticky="ew", pady=2)
+            self.nav_buttons[key] = button
 
-        middle = ttk.Frame(outer)
-        middle.pack(fill="both", expand=True, pady=8)
+        sidebar.rowconfigure(len(NAV_ITEMS) + 1, weight=1)
+        ttk.Label(sidebar, textvariable=self.status_var, foreground="#666", wraplength=130).grid(
+            row=len(NAV_ITEMS) + 2, column=0, sticky="sw"
+        )
 
-        # 左：版本列表
-        left = ttk.LabelFrame(middle, text="已安装的版本", padding=6)
-        left.pack(side="left", fill="both", expand=True)
-        columns = ("loader", "java")
-        self.tree = ttk.Treeview(left, columns=columns, show="tree headings", selectmode="browse")
-        self.tree.heading("#0", text="版本")
-        self.tree.heading("loader", text="加载器")
-        self.tree.heading("java", text="Java")
-        self.tree.column("#0", width=300)
-        self.tree.column("loader", width=80, anchor="center")
-        self.tree.column("java", width=60, anchor="center")
-        scroll = ttk.Scrollbar(left, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.pack(side="left", fill="both", expand=True)
-        scroll.pack(side="right", fill="y")
-        self.tree.bind("<Double-1>", lambda _event: self.launch())
+        self.content = ttk.Frame(self.root)
+        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content.columnconfigure(0, weight=1)
+        self.content.rowconfigure(0, weight=1)
 
-        # 右：设置
-        right = ttk.LabelFrame(middle, text="这次怎么启动", padding=8)
-        right.pack(side="left", fill="y", padx=(8, 0))
-        self._row(right, "玩家名", ttk.Entry(right, textvariable=self.username_var, width=18))
-        self._row(right, "最大内存(MB)", ttk.Entry(right, textvariable=self.memory_var, width=18))
-        self._row(right, "Java", ttk.Label(right, textvariable=self.java_var, width=18))
-        ttk.Button(right, text="检测 Java", command=self.detect_java).pack(fill="x", pady=(6, 2))
+        self.pages = {
+            "versions": VersionsPage(self.content, self),
+            "accounts": AccountsPage(self.content, self),
+            "settings": SettingsPage(self.content, self),
+        }
+        for page in self.pages.values():
+            page.grid(row=0, column=0, sticky="nsew")
+            page.grid_remove()
 
-        actions = ttk.LabelFrame(outer, text="操作", padding=6)
-        actions.pack(fill="x")
-        row = ttk.Frame(actions)
-        row.pack(fill="x")
-        self.launch_button = ttk.Button(row, text="▶ 启动", command=self.launch)
-        self.launch_button.pack(side="left")
-        ttk.Button(row, text="打印启动命令", command=self.print_command).pack(side="left", padx=6)
-        ttk.Button(row, text="刷新列表", command=self.refresh_versions).pack(side="left")
+        self.current_page = ""
 
-        row2 = ttk.Frame(actions)
-        row2.pack(fill="x", pady=(6, 0))
-        ttk.Button(row2, text="安装原版…", command=self.install_vanilla).pack(side="left")
-        ttk.Button(row2, text="给选中版本装 Fabric", command=self.install_fabric).pack(side="left", padx=6)
-        ttk.Button(row2, text="给选中版本装 Forge", command=self.install_forge).pack(side="left")
-        self.progress = ttk.Progressbar(row2, mode="determinate", length=220)
-        self.progress.pack(side="right")
+    def _restore_geometry(self) -> None:
+        geometry = self.config.window_geometry or ""
+        if geometry:
+            try:
+                self.root.geometry(geometry)
+                return
+            except tk.TclError:
+                pass
+        self.root.geometry("1060x700")
 
-        # 底部：日志
-        bottom = ttk.LabelFrame(outer, text="日志", padding=4)
-        bottom.pack(fill="both", expand=True, pady=(8, 0))
-        self.log = tk.Text(bottom, height=10, wrap="none", state="disabled")
-        log_scroll = ttk.Scrollbar(bottom, orient="vertical", command=self.log.yview)
-        self.log.configure(yscrollcommand=log_scroll.set)
-        self.log.pack(side="left", fill="both", expand=True)
-        log_scroll.pack(side="right", fill="y")
+    # ---------------------------------------------------------------- 导航
 
-        ttk.Label(outer, textvariable=self.status_var, anchor="w").pack(fill="x", pady=(6, 0))
+    def show_page(self, name: str) -> None:
+        if name not in self.pages:
+            return
+        for key, page in self.pages.items():
+            if key == name:
+                page.grid()
+                page.on_show()
+                self.nav_buttons[key].state(["pressed"])
+            else:
+                page.grid_remove()
+                self.nav_buttons[key].state(["!pressed"])
+        self.current_page = name
 
-    def _row(self, parent, label: str, widget) -> None:
-        frame = ttk.Frame(parent)
-        frame.pack(fill="x", pady=2)
-        ttk.Label(frame, text=label, width=12).pack(side="left")
-        widget.pack(side="left", fill="x", expand=True)
+    def page(self, name: str):
+        return self.pages[name]
 
-    # ---------------------------------------------------------------- 工具
+    # ---------------------------------------------------------------- 状态 / 通知
 
-    def log_line(self, text: str) -> None:
-        self.log.configure(state="normal")
-        self.log.insert("end", text + "\n")
-        self.log.see("end")
-        self.log.configure(state="disabled")
+    def set_status(self, text: str) -> None:
+        self.status_var.set(text)
 
-    def selected_version(self) -> str | None:
-        selection = self.tree.selection()
-        return selection[0] if selection else None
+    def notify(self, text: str) -> None:
+        """没有常驻日志区了：提示统一进状态栏 + 已打开的日志窗口。"""
+        self.set_status(text)
+        for window in self.log_windows.values():
+            try:
+                window.append(f"[LAUNCHER] {text}")
+            except tk.TclError:
+                pass
+
+    def log_line(self, version_id: str, text: str) -> None:
+        window = self.log_windows.get(version_id)
+        if window is not None:
+            try:
+                window.append(text)
+            except tk.TclError:
+                self.log_windows.pop(version_id, None)
+
+    # ---------------------------------------------------------------- 日志窗口
+
+    def open_log_window(self, version_id: str) -> LogWindow:
+        existing = self.log_windows.get(version_id)
+        if existing is not None:
+            try:
+                existing.deiconify()
+                existing.lift()
+                return existing
+            except tk.TclError:
+                self.log_windows.pop(version_id, None)
+        window = LogWindow(
+            self.root,
+            version_id,
+            log_path=self.layout.root / "logs" / f"gelauncher-{version_id}.log",
+        )
+
+        def forget() -> None:
+            self.log_windows.pop(version_id, None)
+            window.destroy()
+
+        window.protocol("WM_DELETE_WINDOW", forget)
+        self.log_windows[version_id] = window
+        return window
+
+    # ---------------------------------------------------------------- 游戏进程
+
+    def is_running(self, version_id: str) -> bool:
+        process = self.processes.get(version_id)
+        return bool(process is not None and process.poll() is None)
+
+    def launch(self, version_id: str) -> None:
+        if self.busy:
+            messagebox.showinfo("等一下", "上一个任务还没结束")
+            return
+        if self.is_running(version_id):
+            messagebox.showinfo("已经在跑了", f"{version_id} 已在运行")
+            return
+
+        settings = self.config.instance(version_id)
+        window = self.open_log_window(version_id) if settings.get("show_log_window", True) else None
+        if window is not None:
+            window.set_status("准备启动…")
+
+        account_name = self.config.selected_account or self.config.username or "Player"
+        options = LaunchOptions(
+            layout=self.layout,
+            version_id=version_id,
+            account=Account(name=account_name),
+            java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
+            max_memory_mb=int(settings["max_memory_mb"]),
+            width=settings.get("width"),
+            height=settings.get("height"),
+        )
+
+        def work() -> None:
+            try:
+                plan = prepare(options)
+                for warning in plan.warnings:
+                    self.messages.put(("log", version_id, f"[WARN] {warning}"))
+                log_path = self.layout.root / "logs" / f"gelauncher-{version_id}.log"
+                self.messages.put(("log", version_id, f"[LAUNCHER] 日志文件：{log_path}"))
+                process = run(
+                    plan,
+                    log_path=log_path,
+                    on_line=lambda line: self.messages.put(("log", version_id, line)),
+                    wait=False,
+                )
+                self.processes[version_id] = process
+                self.messages.put(("status", f"{version_id} 运行中（Java {plan.java.major}）"))
+                self.messages.put(("running", version_id))
+                if window is not None:
+                    self.messages.put(("log_status", version_id, "游戏运行中…"))
+            except Exception as exc:  # noqa: BLE001 - 启动失败要显示出来
+                self.messages.put(("log", version_id, f"[ERROR] 启动失败：{exc}"))
+                if window is not None:
+                    self.messages.put(("log_status", version_id, "启动失败"))
+                self.messages.put(("status", f"启动 {version_id} 失败"))
+                self.messages.put(("error", f"启动失败：{exc}"))
+                self.messages.put(("stopped", version_id))
+                return
+
+            # 等待游戏退出放到另一个线程：游戏跑着的时候界面不能被 busy 锁住
+            def waiter() -> None:
+                code = process.wait()
+                self.messages.put(("log", version_id, f"[LAUNCHER] 游戏退出，退出码 {code}"))
+                self.messages.put(("log_status", version_id, f"已退出（退出码 {code}）"))
+                self.messages.put(("status", f"{version_id} 已退出（退出码 {code}）"))
+                self.messages.put(("stopped", version_id))
+
+            threading.Thread(target=waiter, daemon=True).start()
+
+        self._start_job(work)
+
+    def stop(self, version_id: str) -> None:
+        process = self.processes.get(version_id)
+        if process is not None and process.poll() is None:
+            process.terminate()
+            self.set_status(f"正在结束 {version_id}…")
+
+    # ---------------------------------------------------------------- 安装 / 命令
 
     def base_mc_version(self, version_id: str) -> str:
-        """选中版本对应的原版 id（Fabric/Forge 实例要往回找 inheritsFrom）。"""
+        from gelauncher.core.models import VersionJsonError
+
         try:
             version = self.layout.load_json(version_id)
         except VersionJsonError:
             return version_id
         chain = version_id
-        seen = set()
+        seen: set[str] = set()
         while version.inherits_from and version.inherits_from not in seen:
             seen.add(version.inherits_from)
             chain = version.inherits_from
@@ -158,227 +302,180 @@ class LauncherApp:
                 break
         return chain
 
-    def _run_background(self, target, *args) -> None:
+    def print_command(self, version_id: str) -> None:
+        settings = self.config.instance(version_id)
+        options = LaunchOptions(
+            layout=self.layout,
+            version_id=version_id,
+            account=Account(name=self.config.selected_account or "Player"),
+            java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
+            max_memory_mb=int(settings["max_memory_mb"]),
+            dry_run=True,
+        )
+        try:
+            plan = prepare(options)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("拼不出命令", str(exc))
+            return
+        window = self.open_log_window(version_id)
+        window.append("=" * 70)
+        window.append(plan.printable_command())
+        window.append("=" * 70)
+        window.set_status("已打印启动命令")
+
+    def install_loader(self, base_version: str, kind: str) -> None:
+        name = "Fabric" if kind == "fabric" else "Forge"
+        if not messagebox.askyesno(f"装 {name}", f"给 {base_version} 装 {name}？"):
+            return
+        log_window = self.open_log_window(base_version)
+        log_window.set_status(f"安装 {name}…")
+
+        def progress(stage: str, message: str) -> None:
+            self.messages.put(("log", base_version, f"[{stage}] {message}"))
+
+        def work() -> None:
+            try:
+                if kind == "fabric":
+                    report = install_fabric(self.layout, base_version, progress=progress)
+                else:
+                    report = install_forge(self.layout, base_version, progress=progress)
+                self.messages.put(("log", base_version, f"[LAUNCHER] 装好了：{report.version_id}"))
+                self.messages.put(("status", f"{name} 装好了：{report.version_id}"))
+                self.messages.put(("refresh", None))
+            except Exception as exc:  # noqa: BLE001
+                self.messages.put(("log", base_version, f"[ERROR] {name} 安装失败：{exc}"))
+                self.messages.put(("error", f"{name} 安装失败：{exc}"))
+            finally:
+                self.messages.put(("idle", None))
+
+        self._start_job(work)
+
+    def install_vanilla(self, version_id: str) -> None:
+        window = self.open_log_window(version_id)
+        window.set_status(f"安装 {version_id}…")
+
+        def progress(stage: str, done: int, total: int, message: str) -> None:
+            self.messages.put(("log", version_id, f"[{stage}] {message}"))
+            self.messages.put(("progress", done, total))
+
+        def work() -> None:
+            try:
+                report = install_version(self.layout, version_id, progress=progress)
+                if report.downloads.failures:
+                    self.messages.put(
+                        ("log", version_id, f"[ERROR] {len(report.downloads.failures)} 个文件失败")
+                    )
+                self.messages.put(
+                    ("log", version_id, f"[LAUNCHER] 安装完成：下载 {report.downloads.downloaded} 个文件")
+                )
+                self.messages.put(("status", f"{version_id} 安装完成"))
+                self.messages.put(("refresh", None))
+            except Exception as exc:  # noqa: BLE001
+                self.messages.put(("log", version_id, f"[ERROR] 安装失败：{exc}"))
+                self.messages.put(("error", f"安装失败：{exc}"))
+            finally:
+                self.messages.put(("idle", None))
+
+        self._start_job(work)
+
+    def switch_game_dir(self, path: str) -> None:
+        """切换/添加游戏目录（版本页左侧目录列表也走这里）。"""
+        self.config.add_game_dir(path)
+        self.config.save()
+        self.layout = GameLayout(Path(path))
+        self.show_page("versions")
+        self.pages["versions"].refresh_dirs()
+        self.pages["versions"].refresh()
+        self.set_status(f"游戏目录：{path}")
+
+    # 兼容旧调用点
+    def change_game_dir(self, path: str) -> None:
+        self.switch_game_dir(path)
+
+    def remove_game_dir(self, path: str) -> None:
+        self.config.forget_game_dir(path)
+        self.config.save()
+        self.layout = GameLayout(self.config.game_dir_path())
+        self.show_page("versions")
+        self.pages["versions"].refresh_dirs()
+        self.pages["versions"].refresh()
+        self.set_status(f"已从目录列表移除：{path}")
+
+    # ---------------------------------------------------------------- Java 列表
+
+    def java_choices(self) -> list[str]:
+        return self.config.java_choices()
+
+    def add_java_path(self, path: str) -> None:
+        if self.config.add_java_path(path):
+            self.config.save()
+            self.set_status(f"已记住 Java：{path}")
+        else:
+            self.set_status(f"这个 Java 已经在列表里：{path}")
+
+    def detect_java(self) -> None:
+        """后台扫一遍本机 Java，把找到的路径全部塞进下拉框。"""
+
+        def work() -> None:
+            runtimes = installed_javas()
+            pairs = [(item.major, str(item.path)) for item in runtimes]
+            changed = False
+            for _major, path in pairs:
+                if self.config.add_java_path(path):
+                    changed = True
+            if changed:
+                self.config.save()
+            self.messages.put(("java_choices", pairs))
+            self.messages.put(
+                ("status", f"检测到 {len(pairs)} 个 Java，已加入下拉列表" if pairs else "没找到可用的 Java")
+            )
+
+        self._start_job(work)
+
+    # ---------------------------------------------------------------- 任务与消息
+
+    def _start_job(self, target) -> None:
         if self.busy:
             messagebox.showinfo("等一下", "上一个任务还没结束")
             return
         self.busy = True
-        self.launch_button.configure(state="disabled")
 
         def wrapper() -> None:
             try:
-                target(*args)
-            except Exception as exc:  # noqa: BLE001 - 后台错误要显示到界面
-                self.messages.put(("error", f"{type(exc).__name__}: {exc}"))
+                target()
             finally:
                 self.messages.put(("idle", None))
 
         threading.Thread(target=wrapper, daemon=True).start()
 
-    # ---------------------------------------------------------------- 版本列表
+    def _on_callback_exception(self, exc, value, tb) -> None:
+        text = "".join(traceback.format_exception(exc, value, tb))
+        self._write_crash_log(text)
+        messagebox.showerror("界面出错了", f"{value}\n\n详细信息已写入：\n{self.crash_log}")
 
-    def refresh_versions(self) -> None:
-        self.tree.delete(*self.tree.get_children())
-        if not self.layout.root.is_dir():
-            self.status_var.set(f"游戏目录不存在：{self.layout.root}")
+    def _write_crash_log(self, text: str) -> None:
+        try:
+            self.crash_log.parent.mkdir(parents=True, exist_ok=True)
+            with self.crash_log.open("a", encoding="utf-8") as handle:
+                handle.write(f"\n===== {datetime.now().isoformat(timespec='seconds')} =====\n")
+                handle.write(text)
+        except OSError:
+            pass
+
+    def _on_close(self) -> None:
+        running = [name for name in self.processes if self.is_running(name)]
+        if running and not messagebox.askyesno("游戏还在运行", "有游戏在跑，要一起结束吗？"):
             return
-        env = current_env()
-        for version_id in self.layout.installed_versions():
+        for name in running:
+            self.stop(name)
+        self.config.window_geometry = self.root.geometry()
+        self.config.save()
+        for window in list(self.log_windows.values()):
             try:
-                version = self.layout.load_json(version_id)
-            except VersionJsonError as exc:
-                self.tree.insert("", "end", iid=version_id, text=f"{version_id}（JSON 有问题）", values=("?", "?"))
-                self.log_line(f"[警告] {version_id} 的 JSON 有问题：{exc}")
-                continue
-            self.tree.insert(
-                "",
-                "end",
-                iid=version_id,
-                text=version_id,
-                values=(detect_loader(version), version.java_version or "?"),
-            )
-        children = self.tree.get_children()
-        if children:
-            self.tree.selection_set(children[0])
-        self.status_var.set(f"{self.layout.root} · {env.os_name}/{env.arch} · {len(children)} 个版本")
-
-    def choose_game_dir(self) -> None:
-        chosen = filedialog.askdirectory(initialdir=str(self.layout.root), title="选 .minecraft 目录")
-        if not chosen:
-            return
-        self.config.game_dir = chosen
-        self.config.save()
-        self.layout = GameLayout(Path(chosen))
-        self.game_dir_var.set(chosen)
-        self.refresh_versions()
-
-    def open_game_dir(self) -> None:
-        path = self.layout.root
-        if not path.is_dir():
-            messagebox.showwarning("没这个目录", str(path))
-            return
-        os.startfile(str(path))  # noqa: S606 - Windows 上就是用资源管理器打开
-
-    def detect_java(self) -> None:
-        runtimes = installed_javas()
-        if not runtimes:
-            self.java_var.set("（没找到 Java）")
-            return
-        description = "，".join(f"Java {item.major}" for item in runtimes)
-        self.java_var.set(description)
-
-    # ---------------------------------------------------------------- 启动
-
-    def _account(self) -> Account:
-        return Account(name=self.username_var.get().strip() or "Player")
-
-    def _options(self, version_id: str, dry_run: bool = False) -> LaunchOptions:
-        memory = int(self.memory_var.get() or 2048)
-        return LaunchOptions(
-            layout=self.layout,
-            version_id=version_id,
-            account=self._account(),
-            max_memory_mb=memory,
-            dry_run=dry_run,
-        )
-
-    def print_command(self) -> None:
-        version_id = self.selected_version()
-        if not version_id:
-            return
-        try:
-            plan = prepare(self._options(version_id, dry_run=True))
-        except Exception as exc:  # noqa: BLE001
-            self.log_line(f"[错误] 拼不出命令：{exc}")
-            messagebox.showerror("拼不出命令", str(exc))
-            return
-        self.log_line("=" * 60)
-        self.log_line(plan.printable_command())
-        self.log_line("=" * 60)
-        for warning in plan.warnings:
-            self.log_line(f"[警告] {warning}")
-
-    def launch(self) -> None:
-        version_id = self.selected_version()
-        if not version_id:
-            messagebox.showinfo("先选一个版本", "左边列表里点一个版本")
-            return
-        self._save_settings()
-
-        def work() -> None:
-            self.messages.put(("log", f"准备启动 {version_id}…"))
-            plan = prepare(self._options(version_id))
-            for warning in plan.warnings:
-                self.messages.put(("log", f"[警告] {warning}"))
-            self.messages.put(("status", f"{version_id} 运行中（Java {plan.java.major}）"))
-            log_path = self.layout.root / "logs" / "gelauncher-ui.log"
-            self.messages.put(("log", f"日志文件：{log_path}"))
-            process = run(
-                plan,
-                log_path=log_path,
-                on_line=lambda line: self.messages.put(("log", line)),
-                wait=False,
-            )
-            self._current_process = process
-            code = process.wait()
-            self.messages.put(("status", f"{version_id} 已退出（退出码 {code}）"))
-            self.messages.put(("log", f"游戏退出，退出码 {code}"))
-
-        self._run_background(work)
-
-    # ---------------------------------------------------------------- 安装
-
-    def install_vanilla(self) -> None:
-        dialog = tk.Toplevel(self.root)
-        dialog.title("安装原版")
-        dialog.transient(self.root)
-        dialog.grab_set()
-        ttk.Label(dialog, text="版本 id（例如 1.21.8、1.21.4）").pack(padx=12, pady=(12, 4))
-        entry = ttk.Entry(dialog, width=24)
-        entry.pack(padx=12)
-        entry.insert(0, self.selected_version() or "1.21.8")
-        entry.focus_set()
-
-        def submit() -> None:
-            version_id = entry.get().strip()
-            dialog.destroy()
-            if version_id:
-                self._start_install(version_id)
-
-        ttk.Button(dialog, text="开始下载", command=submit).pack(padx=12, pady=12)
-
-    def _start_install(self, version_id: str) -> None:
-        self._save_settings()
-
-        def work() -> None:
-            self.messages.put(("status", f"安装 {version_id}…"))
-            report = install_version(
-                self.layout,
-                version_id,
-                progress=lambda stage, done, total, message: self.messages.put(
-                    ("progress", stage, done, total, message)
-                ),
-            )
-            for message in report.messages:
-                self.messages.put(("log", f"[提示] {message}"))
-            if report.downloads.failures:
-                self.messages.put(
-                    ("log", f"{len(report.downloads.failures)} 个文件失败：" + str(report.downloads.failures[:3]))
-                )
-            self.messages.put(("log", f"安装完成：下载 {report.downloads.downloaded} 个文件"))
-            self.messages.put(("refresh", None))
-
-        self._run_background(work)
-
-    def install_fabric(self) -> None:
-        version_id = self.selected_version()
-        if not version_id:
-            messagebox.showinfo("先选一个版本", "选一个原版版本，再给它装 Fabric")
-            return
-        base = self.base_mc_version(version_id)
-        if not messagebox.askyesno("装 Fabric", f"给 {base} 装最新稳定版 Fabric？"):
-            return
-
-        def work() -> None:
-            report = install_fabric(
-                self.layout,
-                base,
-                progress=lambda stage, message: self.messages.put(("log", f"[{stage}] {message}")),
-            )
-            self.messages.put(("log", f"装好了：{report.version_id}"))
-            self.messages.put(("refresh", None))
-
-        self._run_background(work)
-
-    def install_forge(self) -> None:
-        version_id = self.selected_version()
-        if not version_id:
-            messagebox.showinfo("先选一个版本", "选一个原版版本，再给它装 Forge")
-            return
-        base = self.base_mc_version(version_id)
-        if not messagebox.askyesno("装 Forge", f"给 {base} 装 Forge（版本自动挑推荐的）？"):
-            return
-
-        def work() -> None:
-            report = install_forge(
-                self.layout,
-                base,
-                progress=lambda stage, message: self.messages.put(("log", f"[{stage}] {message}")),
-            )
-            self.messages.put(("log", f"装好了：{report.version_id}"))
-            self.messages.put(("refresh", None))
-
-        self._run_background(work)
-
-    # ---------------------------------------------------------------- 消息循环
-
-    def _save_settings(self) -> None:
-        self.config.username = self.username_var.get().strip() or "Player"
-        try:
-            self.config.max_memory_mb = int(self.memory_var.get())
-        except ValueError:
-            self.config.max_memory_mb = 2048
-        self.config.save()
+                window.destroy()
+            except tk.TclError:
+                pass
+        self.root.destroy()
 
     def _poll(self) -> None:
         try:
@@ -386,23 +483,46 @@ class LauncherApp:
                 message = self.messages.get_nowait()
                 kind = message[0]
                 if kind == "log":
-                    self.log_line(message[1])
+                    _, version_id, text = message
+                    self.log_line(version_id, text)
+                elif kind == "log_status":
+                    _, version_id, text = message
+                    window = self.log_windows.get(version_id)
+                    if window is not None:
+                        try:
+                            window.set_status(text)
+                        except tk.TclError:
+                            pass
                 elif kind == "status":
-                    self.status_var.set(message[1])
+                    self.set_status(message[1])
                 elif kind == "progress":
-                    _, stage, done, total, text = message
-                    if total:
-                        self.progress.configure(maximum=total, value=done)
-                    self.status_var.set(f"{stage}：{text[:60]}")
-                elif kind == "error":
-                    self.log_line(f"[错误] {message[1]}")
-                    self.status_var.set("出错了，看日志")
+                    page = self.pages.get("versions")
+                    if isinstance(page, VersionsPage):
+                        page.detail_status.set(f"下载中 {message[1]}/{message[2]}")
+                elif kind == "running":
+                    page = self.pages.get("versions")
+                    if isinstance(page, VersionsPage) and page.current == message[1]:
+                        page.stop_button.configure(state="normal")
+                elif kind == "stopped":
+                    page = self.pages.get("versions")
+                    if isinstance(page, VersionsPage) and page.current == message[1]:
+                        page.stop_button.configure(state="disabled")
+                    self.processes.pop(message[1], None)
                 elif kind == "refresh":
-                    self.refresh_versions()
+                    self.pages["versions"].refresh()
+                elif kind == "java_choices":
+                    self.detected_javas = list(message[1])
+                    for page in self.pages.values():
+                        refresh = getattr(page, "refresh_java_choices", None)
+                        if callable(refresh):
+                            try:
+                                refresh()
+                            except tk.TclError:
+                                pass
+                elif kind == "error":
+                    self.set_status(message[1])
                 elif kind == "idle":
                     self.busy = False
-                    self.launch_button.configure(state="normal")
-                    self.progress.configure(value=0)
         except queue.Empty:
             pass
         self.root.after(80, self._poll)
@@ -411,14 +531,12 @@ class LauncherApp:
 def run_ui(config: Config | None = None) -> int:
     config = config or Config.load()
     root = tk.Tk()
+    app = LauncherApp(root, config)
     try:
-        style = ttk.Style()
-        if "vista" in style.theme_names():
-            style.theme_use("vista")
-    except tk.TclError:
-        pass
-    LauncherApp(root, config)
-    root.mainloop()
+        root.mainloop()
+    except Exception:  # noqa: BLE001
+        app._write_crash_log(traceback.format_exc())
+        raise
     return 0
 
 
