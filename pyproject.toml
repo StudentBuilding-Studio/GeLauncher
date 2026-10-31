@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gelauncher"
+version = "0.1.0"
+description = "Ge 启动器：只给几个朋友用的极简 Minecraft 启动器"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+ge = "gelauncher.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gelauncher*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q -p no:cacheprovider"

@@ -1,0 +1,375 @@
+"""命令行入口：所有能力先在这里可用，UI 只是它的另一种皮肤。
+
+用法示例：
+    python -m gelauncher versions
+    python -m gelauncher doctor
+    python -m gelauncher launch --version 1.21.8 --print-command
+    python -m gelauncher launch --version 1.21.8
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+from . import __version__
+from .config import Config
+from .core.command import Account
+from .core.inherit import InheritError
+from .core.java import installed_javas
+from .core.launch import LaunchError, LaunchOptions, prepare, run
+from .core.layout import GameLayout, current_env
+from .core.models import VersionJsonError
+from .core.rules import allow
+from .core import libraries
+
+
+def _add_common(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--game-dir", type=Path, help="游戏目录（默认读配置，再默认 %%APPDATA%%\\.minecraft）")
+    parser.add_argument("--java", type=Path, help="指定 java.exe，跳过自动查找")
+    parser.add_argument("--username", help="离线玩家名")
+
+
+def _make_layout(args: argparse.Namespace, config: Config) -> GameLayout:
+    return GameLayout(args.game_dir or config.game_dir_path())
+
+
+def detect_loader(version) -> str:
+    """从 mainClass / 库名猜是哪家的加载器（只用于显示）。"""
+    main_class = (version.main_class or "").lower()
+    names = " ".join(version.library_names()).lower()
+    if "fabric" in main_class or "net.fabricmc" in names:
+        return "Fabric"
+    if "quilt" in main_class or "org.quiltmc" in names:
+        return "Quilt"
+    if (
+        "forge" in main_class
+        or "bootstraplauncher" in main_class
+        or "minecraftforge" in names
+        or "cpw.mods" in names
+    ):
+        return "Forge"
+    if "optifine" in names:
+        return "OptiFine"
+    return "原版"
+
+
+def cmd_versions(args: argparse.Namespace, config: Config) -> int:
+    layout = _make_layout(args, config)
+    versions = layout.installed_versions()
+    if not versions:
+        print(f"{layout.root} 下没有安装任何版本（versions/ 为空）")
+        return 1
+    env = current_env()
+    print(f"游戏目录：{layout.root}")
+    print(f"本机环境：{env.os_name} / {env.arch}")
+    for version_id in versions:
+        try:
+            version = layout.load_json(version_id)
+        except VersionJsonError as exc:
+            print(f"  {version_id:<32} [JSON 有问题] {exc}")
+            continue
+        loader = detect_loader(version)
+        parent = f"，继承自 {version.inherits_from}" if version.inherits_from else ""
+        print(
+            f"  {version_id:<32} {loader:<7} java={version.java_version or '?':<3} "
+            f"libs={len(version.libraries):<4}{parent}"
+        )
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
+    layout = _make_layout(args, config)
+    env = current_env()
+    print("== Ge 启动器体检 ==")
+    print(f"版本      : {__version__}")
+    print(f"Python    : {sys.version.split()[0]}")
+    print(f"配置      : {config_path_hint()}")
+    print(f"游戏目录  : {layout.root}  {'存在' if layout.root.is_dir() else '不存在'}")
+    print(f"系统      : {env.os_name} / {env.arch}")
+    print(f"版本数    : {len(layout.installed_versions())}")
+    print(f"assets    : {layout.assets_dir}  {'有' if layout.assets_dir.is_dir() else '缺'}")
+    print(f"libraries : {layout.libraries_dir}  {'有' if layout.libraries_dir.is_dir() else '缺'}")
+    print("\n== 可用的 Java ==")
+    javas = installed_javas()
+    if not javas:
+        print("  （没找到，请安装 Java 21 或用 --java 指定）")
+    for runtime in javas:
+        print(f"  Java {runtime.major:<3} {runtime.path}")
+    return 0
+
+
+def config_path_hint() -> str:
+    from .config import config_path
+
+    return str(config_path())
+
+
+def cmd_launch(args: argparse.Namespace, config: Config) -> int:
+    layout = _make_layout(args, config)
+    options = LaunchOptions(
+        layout=layout,
+        version_id=args.version,
+        account=Account(name=args.username or config.username),
+        java_path=args.java or (Path(config.java_path) if config.java_path else None),
+        max_memory_mb=args.max_memory or config.max_memory_mb,
+        width=args.width or config.width,
+        height=args.height or config.height,
+        extra_jvm_args=tuple(args.jvm_arg or ()),
+        extra_game_args=tuple(args.game_arg or ()),
+        isolated=not args.no_isolate,
+        dry_run=args.dry_run,
+    )
+    try:
+        plan = prepare(options)
+    except (LaunchError, InheritError, VersionJsonError) as exc:
+        print(f"启动失败：{exc}", file=sys.stderr)
+        return 1
+
+    for warning in plan.warnings:
+        print(f"[警告] {warning}", file=sys.stderr)
+
+    if args.print_command or args.dry_run:
+        print(plan.printable_command())
+    if args.dry_run:
+        return 0
+
+    print(f"启动 {plan.version_id}（Java {plan.java.major}）")
+    print(f"工作目录：{plan.cwd}")
+    log_path = layout.root / "logs" / f"gelauncher-{_stamp()}.log"
+    print(f"日志：{log_path}")
+    if args.print_command:
+        print()
+
+    def echo(line: str) -> None:
+        if not args.quiet:
+            print(line, flush=True)
+
+    try:
+        result = run(plan, log_path=log_path, on_line=echo, wait=not args.detach)
+    except LaunchError as exc:
+        print(f"启动失败：{exc}", file=sys.stderr)
+        return 1
+
+    if args.detach:
+        print("游戏已在后台启动（--detach），启动器退出。")
+        return 0
+    print(f"游戏退出，退出码 {result.returncode}")
+    return 0 if result.returncode == 0 else result.returncode
+
+
+def _stamp() -> str:
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def cmd_verify(args: argparse.Namespace, config: Config) -> int:
+    """机械验收（方案 §6.4）：进程存活 N 秒 + 游戏日志里出现关键字。"""
+    layout = _make_layout(args, config)
+    options = LaunchOptions(
+        layout=layout,
+        version_id=args.version,
+        account=Account(name=args.username or config.username),
+        java_path=args.java or (Path(config.java_path) if config.java_path else None),
+        max_memory_mb=args.max_memory or config.max_memory_mb,
+        extra_jvm_args=tuple(args.jvm_arg or ()),
+        extra_game_args=tuple(args.game_arg or ()),
+        isolated=not args.no_isolate,
+    )
+    try:
+        plan = prepare(options)
+    except (LaunchError, InheritError, VersionJsonError) as exc:
+        print(f"验收失败：{exc}", file=sys.stderr)
+        return 1
+
+    for warning in plan.warnings:
+        print(f"[警告] {warning}", file=sys.stderr)
+    print(f"命令：{plan.printable_command()[:400]}{'…' if len(plan.printable_command()) > 400 else ''}")
+
+    log_path = layout.root / "logs" / f"gelauncher-verify-{_stamp()}.log"
+    print(f"启动器日志：{log_path}")
+    captured: list[str] = []
+    try:
+        process = run(
+            plan,
+            log_path=log_path,
+            on_line=captured.append,
+            wait=False,
+        )
+    except LaunchError as exc:
+        print(f"验收失败：{exc}", file=sys.stderr)
+        return 1
+
+    started = time.time()
+    print(f"等待 {args.seconds} 秒，看进程是否还活着…")
+    alive = True
+    deadline = started + args.seconds
+    while time.time() < deadline:
+        if process.poll() is not None:
+            alive = False
+            break
+        time.sleep(0.5)
+
+    game_log = plan.cwd / "logs" / "latest.log"
+    keywords = args.keyword or ["OpenAL initialized", "Created:", "Setting user"]
+    # 只认"这次启动之后写过"的游戏日志，避免把上一次的成绩算进来
+    text = ""
+    if game_log.is_file() and game_log.stat().st_mtime >= started - 2:
+        text = game_log.read_text(encoding="utf-8", errors="replace")
+    haystack = text + "\n" + "\n".join(captured)
+    found = [keyword for keyword in keywords if keyword in haystack]
+
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=15)
+        except Exception:  # noqa: BLE001 - 收尾失败不影响结论
+            process.kill()
+
+    print()
+    print(f"进程存活：{'是' if alive else '否（提前退出）'}")
+    print(f"游戏日志：{game_log}{'（本次有写入）' if text else '（本次没写/不存在）'}")
+    print(f"命中关键字：{', '.join(found) if found else '（无）'}")
+    if alive and found:
+        print("\n验收通过 ✔")
+        return 0
+    if not alive:
+        print(f"\n验收失败 ✘：进程在 {args.seconds} 秒内退出了，先看 {log_path}")
+    else:
+        print(f"\n验收失败 ✘：进程活着，但日志里没有 {keywords}")
+    return 1
+
+
+def cmd_config(args: argparse.Namespace, config: Config) -> int:
+    if args.action == "set":
+        if args.key == "max-memory":
+            config.max_memory_mb = int(args.value)
+        elif args.key == "username":
+            config.username = args.value
+        elif args.key == "java":
+            config.java_path = args.value
+        elif args.key == "game-dir":
+            config.game_dir = str(Path(args.value).expanduser())
+        elif args.key == "width":
+            config.width = int(args.value)
+        elif args.key == "height":
+            config.height = int(args.value)
+        else:
+            print(f"不认识的配置项：{args.key}", file=sys.stderr)
+            return 2
+        path = config.save()
+        print(f"已保存到 {path}")
+    print(f"游戏目录  : {config.game_dir}")
+    print(f"Java      : {config.java_path or '（自动查找）'}")
+    print(f"玩家名    : {config.username}")
+    print(f"最大内存  : {config.max_memory_mb} MB")
+    print(f"窗口尺寸  : {config.width or '默认'} x {config.height or '默认'}")
+    return 0
+
+
+def cmd_info(args: argparse.Namespace, config: Config) -> int:
+    """打印一个版本的解析结果：合并 inheritance 后到底有哪些库生效。"""
+    layout = _make_layout(args, config)
+    try:
+        version = layout.load_json(args.version)
+    except VersionJsonError as exc:
+        print(f"读不了版本 JSON：{exc}", file=sys.stderr)
+        return 1
+    from .core.inherit import resolve
+
+    env = current_env()
+    merged = resolve(layout, args.version)
+    print(f"版本       : {merged.id}")
+    print(f"mainClass  : {merged.main_class}")
+    print(f"jar        : {merged.jar}")
+    print(f"java       : {merged.java_version}")
+    print(f"assetIndex : {merged.asset_index.id if merged.asset_index else merged.assets}")
+    print(f"libraries  : {len(version.libraries)}（原始）→ {len(merged.libraries)}（合并后）")
+    classpath, natives = libraries.effective_libraries(merged, env)
+    print(f"生效的库   : {len(classpath)} 个进 classpath，{len(natives)} 个解压")
+    if args.list_libraries:
+        for lib in classpath:
+            print(f"  cp  {libraries.library_relative_path(lib)}")
+        for lib in natives:
+            artifact, classifier = libraries.native_artifact(lib, env)
+            if artifact:
+                print(f"  nat {artifact.path}  ({classifier})")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="ge", description="Ge 启动器（只给几个朋友用的极简 Minecraft 启动器）"
+    )
+    parser.add_argument("--version", action="version", version=f"GeLauncher {__version__}")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    versions = sub.add_parser("versions", help="列出已安装的版本")
+    _add_common(versions)
+    versions.set_defaults(func=cmd_versions)
+
+    doctor = sub.add_parser("doctor", help="检查环境（游戏目录 / Java / assets）")
+    _add_common(doctor)
+    doctor.set_defaults(func=cmd_doctor)
+
+    launch = sub.add_parser("launch", help="启动一个已安装的版本")
+    _add_common(launch)
+    launch.add_argument("--version-id", dest="version", required=True, help="版本 id，例如 1.21.8")
+    launch.add_argument("--max-memory", type=int, help="最大内存（MB）")
+    launch.add_argument("--width", type=int)
+    launch.add_argument("--height", type=int)
+    launch.add_argument("--jvm-arg", action="append", help="追加 JVM 参数，可重复")
+    launch.add_argument("--game-arg", action="append", help="追加游戏参数，可重复")
+    launch.add_argument("--print-command", action="store_true", help="打印拼好的命令再启动")
+    launch.add_argument("--dry-run", action="store_true", help="只做检查并打印命令，不启动")
+    launch.add_argument("--detach", action="store_true", help="启动后立即返回")
+    launch.add_argument("--quiet", action="store_true", help="不把游戏输出打到终端")
+    launch.add_argument("--no-isolate", action="store_true", help="不隔离游戏目录（用 .minecraft 根）")
+    launch.set_defaults(func=cmd_launch)
+
+    verify = sub.add_parser("verify", help="机械验收：启动后看进程存活 + 日志关键字")
+    _add_common(verify)
+    verify.add_argument("--version-id", dest="version", required=True)
+    verify.add_argument("--seconds", type=float, default=25, help="进程需要存活的秒数")
+    verify.add_argument("--keyword", action="append", help="日志里必须出现的关键字，可重复")
+    verify.add_argument("--max-memory", type=int)
+    verify.add_argument("--jvm-arg", action="append")
+    verify.add_argument("--game-arg", action="append")
+    verify.add_argument("--no-isolate", action="store_true")
+    verify.set_defaults(func=cmd_verify)
+
+    info = sub.add_parser("info", help="看一个版本的解析结果")
+    _add_common(info)
+    info.add_argument("--version-id", dest="version", required=True)
+    info.add_argument("--list-libraries", action="store_true")
+    info.set_defaults(func=cmd_info)
+
+    cfg = sub.add_parser("config", help="查看 / 修改配置")
+    cfg.add_argument("action", nargs="?", choices=["show", "set"], default="show")
+    cfg.add_argument("key", nargs="?")
+    cfg.add_argument("value", nargs="?")
+    cfg.set_defaults(func=cmd_config)
+
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    config = Config.load()
+    if args.command == "config":
+        return args.func(args, config)
+    try:
+        return args.func(args, config)
+    except (VersionJsonError, InheritError) as exc:
+        print(f"出错了：{exc}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\n已中断", file=sys.stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

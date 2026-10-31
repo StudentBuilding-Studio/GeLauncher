@@ -1,0 +1,16 @@
+# 运行期 / 开发期产物，不进版本库
+.deps/
+.pylib/
+.venv/
+.tmp/
+.pytest-tmp/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+build/
+dist/
+*.spec
+logs/
+
+# 测试 fixture 里的大 JSON 要保留（体积可接受），别误删
+!tests/fixtures/*.json
