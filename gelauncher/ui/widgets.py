@@ -36,9 +36,8 @@ class Combo(ctk.CTkComboBox):
         return super().cget(key)
 
     def bind(self, sequence, func, add=None):  # noqa: A003
-        if sequence == "<<ComboboxSelected>>":
-            return super().bind(sequence, lambda _e: func(_e), add)
-        return super().bind(sequence, func, add)
+        # CTkComboBox.bind 只接受 add="+" / True，默认值 None 会被它直接拒绝
+        return super().bind(sequence, func, add="+")
 
 
 class Card(ctk.CTkFrame):
