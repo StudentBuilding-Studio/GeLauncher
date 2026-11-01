@@ -10,7 +10,7 @@ import customtkinter as ctk
 
 from gelauncher.ui import theme
 from gelauncher.ui.instance_list import InstanceList
-from gelauncher.ui.widgets import Combo, button, label
+from gelauncher.ui.widgets import close_later, Combo, button, label
 
 
 class VanillaInstallDialog(ctk.CTkToplevel):
@@ -212,4 +212,4 @@ class VanillaInstallDialog(ctk.CTkToplevel):
         if error:
             messagebox.showerror("装不了", error, parent=self)
             return
-        self.destroy()
+        close_later(self)

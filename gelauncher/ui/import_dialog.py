@@ -9,7 +9,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from gelauncher.ui import theme
-from gelauncher.ui.widgets import button, label
+from gelauncher.ui.widgets import close_later, button, label
 
 
 def _default_instance(name: str, fallback: str) -> str:
@@ -106,4 +106,4 @@ class ModpackImportDialog(ctk.CTkToplevel):
         if error:
             messagebox.showerror("导入失败", error, parent=self)
             return
-        self.destroy()
+        close_later(self)

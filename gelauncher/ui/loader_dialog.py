@@ -9,7 +9,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from gelauncher.ui.instance_list import InstanceList
-from gelauncher.ui.widgets import button, label
+from gelauncher.ui.widgets import close_later,  button, label
 
 
 class LoaderInstallDialog(ctk.CTkToplevel):
@@ -169,5 +169,5 @@ class LoaderInstallDialog(ctk.CTkToplevel):
             messagebox.showinfo("还没选版本", "先在列表里点一个版本", parent=self)
             return
         version = selection[0]
-        self.destroy()
         self.on_choose(self.instance, self.kind, version)
+        close_later(self)

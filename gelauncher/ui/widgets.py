@@ -90,3 +90,23 @@ def button(master, text: str, command, *, accent: bool = False, danger: bool = F
         kwargs.setdefault("hover_color", ("#e5e7eb", "#363b43"))
         kwargs.setdefault("text_color", theme.TEXT)
     return ctk.CTkButton(master, text=text, command=command, **kwargs)
+
+
+def close_later(window, delay: int = 120) -> None:
+    """先隐藏、稍后再销毁。
+
+    CTkButton 的悬停动画会在 after 里回调自己的 canvas；如果在按钮 command 里
+    立刻 destroy 整个 Toplevel，回调就会撞上已销毁的控件，报
+    "invalid command name ...!ctkcanvas"。延迟销毁可以避开这个时机。
+    """
+    try:
+        window.withdraw()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        window.after(delay, window.destroy)
+    except Exception:  # noqa: BLE001
+        try:
+            window.destroy()
+        except Exception:  # noqa: BLE001
+            pass

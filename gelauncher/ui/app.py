@@ -1004,6 +1004,9 @@ class LauncherApp:
     def _on_callback_exception(self, exc, value, tb) -> None:
         text = "".join(traceback.format_exception(exc, value, tb))
         self._write_crash_log(text)
+        # 关窗时 CTk 的悬停动画可能回调已销毁的控件，这类 TclError 无害，不弹框
+        if isinstance(value, tk.TclError) and "invalid command name" in str(value):
+            return
         messagebox.showerror("界面出错了", f"{value}\n\n详细信息已写入：\n{self.crash_log}")
 
     def _write_crash_log(self, text: str) -> None:

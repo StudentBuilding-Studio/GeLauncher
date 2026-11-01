@@ -11,7 +11,7 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from gelauncher.ui.widgets import button, label
+from gelauncher.ui.widgets import button, close_later, label
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _HINT = "只能用大小写英文字母、数字和下划线（_），不要用中文、空格或特殊符号。"
@@ -83,7 +83,7 @@ class OfflineAccountDialog(ctk.CTkToplevel):
             self.error_var.set("含有不允许的字符：" + _HINT)
             return
         self.result = name
-        self.destroy()
+        close_later(self)
 
 
 def ask_offline_name(parent: tk.Misc) -> str | None:

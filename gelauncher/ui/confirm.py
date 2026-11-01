@@ -10,7 +10,7 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from gelauncher.ui.widgets import button
+from gelauncher.ui.widgets import button, close_later
 
 
 class DangerConfirmDialog(ctk.CTkToplevel):
@@ -73,7 +73,7 @@ class DangerConfirmDialog(ctk.CTkToplevel):
 
     def _confirm(self) -> None:
         self.result = True
-        self.destroy()
+        close_later(self)
 
     def _cancel(self) -> None:
         self.result = False

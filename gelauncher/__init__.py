@@ -6,5 +6,5 @@
     gelauncher.ui     Tkinter 界面（只是 core 的薄壳）
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 LAUNCHER_NAME = "gelauncher"
