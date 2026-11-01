@@ -75,11 +75,23 @@ def apply_window_icon(root) -> None:
         pass
 
 
+def _fix_default_font() -> None:
+    """CustomTkinter 默认字体是 Roboto，Windows 没装会回退成衬线字体。"""
+    if ctk is None:
+        return
+    try:
+        ctk.ThemeManager.theme["CTkFont"]["family"] = "Microsoft YaHei UI"
+        ctk.ThemeManager.theme["CTkFont"]["size"] = 13
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def make_root() -> tk.Tk:
     if ctk is None:
         root = tk.Tk()
         apply_window_icon(root)
         return root
+    _fix_default_font()
     ctk.set_appearance_mode(_current_mode)
     ctk.set_default_color_theme("blue")
     root = ctk.CTk()
@@ -92,6 +104,7 @@ def set_mode(mode: str) -> None:
     global _current_mode
     _current_mode = mode if mode in (MODE_SYSTEM, MODE_LIGHT, MODE_DARK) else MODE_SYSTEM
     if ctk is not None:
+        _fix_default_font()
         ctk.set_appearance_mode(_current_mode)
 
     def _refresh() -> None:
@@ -123,6 +136,7 @@ def set_initial(mode: str) -> None:
     global _current_mode
     _current_mode = mode if mode in (MODE_SYSTEM, MODE_LIGHT, MODE_DARK) else MODE_SYSTEM
     if ctk is not None:
+        _fix_default_font()
         ctk.set_appearance_mode(_current_mode)
 
 

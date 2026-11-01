@@ -122,7 +122,14 @@ class VersionsPage(Page):
         button(toolbar, "导入整合包…", self._import_modpack).grid(
             row=0, column=3, padx=(6, 0)
         )
-        button(toolbar, "刷新", self.refresh).grid(row=0, column=4, padx=(6, 0))
+        button(
+            toolbar,
+            "↻",
+            self.refresh,
+            width=38,
+            height=32,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=18),
+        ).grid(row=0, column=4, padx=(6, 0))
 
         versions.body.columnconfigure(0, weight=1)
         versions.body.rowconfigure(1, weight=1)

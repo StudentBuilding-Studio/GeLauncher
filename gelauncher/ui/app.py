@@ -123,6 +123,7 @@ class LauncherApp:
                 anchor="w",
                 height=36,
                 corner_radius=8,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
                 fg_color="transparent",
                 text_color=theme.TEXT,
                 hover_color=("#e2e8f0", "#2a2f37"),
@@ -138,6 +139,7 @@ class LauncherApp:
             wraplength=130,
             justify="left",
             anchor="sw",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
         self.status_label.grid(
             row=len(NAV_ITEMS) + 2, column=0, sticky="ew", padx=10, pady=(0, 10)
