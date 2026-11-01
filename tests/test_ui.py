@@ -652,3 +652,52 @@ def test_finished_install_closes_task_window_and_shows_result(app, monkeypatch):
     assert any(kind == "info" and "安装完成" in text for kind, _title, text in [
         (k, t, m) for k, t, m in [(d[0], d[0], d[1]) for d in app.dialogs]
     ]) or any("安装完成" in str(d[1]) for d in app.dialogs)
+
+def test_java_auto_option_and_hint(app):
+    versions = app.pages["versions"]
+    versions.open("1.21.8")
+    assert versions.AUTO_JAVA in versions.java_combo.cget("values")
+    versions.java_var.set(versions.AUTO_JAVA)
+    versions._save_now()
+    assert app.config.instance("1.21.8").get("java_path", "") == ""
+    assert versions.java_hint_var.get()
+
+
+def test_ensure_java_prompts_when_manual_too_low(app, monkeypatch):
+    from gelauncher.core import java as core_java
+    from gelauncher.ui import app as ui_app
+
+    monkeypatch.setattr(
+        core_java,
+        "probe_java",
+        lambda path: core_java.JavaRuntime(path=Path(str(path)), version="8.0.1"),
+    )
+    app.config.update_instance("1.21.8", java_path=r"C:\jdk8\bin\java.exe")
+    asked = []
+    monkeypatch.setattr(
+        ui_app.messagebox, "askyesno", lambda title, message, **k: asked.append(message) or True
+    )
+    called = []
+    monkeypatch.setattr(app, "_start_java_install", lambda required: called.append(required) or False)
+
+    assert app.ensure_java("1.21.8") is False
+    assert called == [21]
+    assert asked and "Java 8" in asked[0]
+
+
+def test_ensure_java_prompts_when_no_matching_java(app, monkeypatch):
+    from gelauncher.core import java as core_java
+    from gelauncher.ui import app as ui_app
+
+    monkeypatch.setattr(core_java, "choose_java", lambda *a, **k: (None, False))
+    monkeypatch.setattr(core_java, "probe_java", lambda path: None)
+    asked = []
+    monkeypatch.setattr(
+        ui_app.messagebox, "askyesno", lambda title, message, **k: asked.append(message) or True
+    )
+    called = []
+    monkeypatch.setattr(app, "_start_java_install", lambda required: called.append(required) or False)
+
+    assert app.ensure_java("1.21.8") is False
+    assert called == [21]
+    assert asked and "需要 Java 21" in asked[0]

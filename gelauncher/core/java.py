@@ -168,3 +168,72 @@ def find_java(
     if enough:
         return min(enough, key=lambda item: item.major)
     return candidates[0]
+
+
+_PROBE_CACHE: dict[tuple[str, int], "JavaRuntime | None"] = {}
+
+
+def probe_java_cached(path: str | Path) -> "JavaRuntime | None":
+    """带缓存的探测（UI 里反复刷新下拉框时不要每次都起进程）。"""
+    candidate = Path(path)
+    try:
+        key = (str(candidate.resolve()).lower(), candidate.stat().st_mtime_ns)
+    except OSError:
+        return None
+    if key in _PROBE_CACHE:
+        return _PROBE_CACHE[key]
+    runtime = probe_java(candidate)
+    _PROBE_CACHE[key] = runtime
+    return runtime
+
+
+def choose_java(
+    required_major: int | None,
+    paths,
+    preferred: str | None = None,
+) -> tuple["JavaRuntime | None", bool]:
+    """按版本要求挑 Java。
+
+    返回 ``(runtime, satisfied)``：
+    - ``runtime``：最终会用的那个（可能不满足要求，由调用方给警告）；
+    - ``satisfied``：它是否满足 ``required_major``。
+
+    规则和运行时的 ``find_java`` 保持一致：优先 ``preferred``（全局默认），
+    不满足要求时从候选里选"大版本 >= 要求"中最小的；都不满足就用最高的。
+    """
+    runtimes: list[JavaRuntime] = []
+    seen: set[str] = set()
+    for item in paths or ():
+        runtime = probe_java_cached(item)
+        if runtime is None:
+            continue
+        key = str(runtime.path).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        runtimes.append(runtime)
+    preferred_runtime = probe_java_cached(preferred) if preferred else None
+    if preferred_runtime is not None and str(preferred_runtime.path).lower() not in seen:
+        runtimes.append(preferred_runtime)
+
+    if not runtimes:
+        return (None, False)
+
+    def _satisfies(runtime: JavaRuntime) -> bool:
+        return required_major is None or runtime.major >= required_major
+
+    if preferred_runtime is not None and _satisfies(preferred_runtime):
+        return (preferred_runtime, True)
+    if preferred_runtime is not None:
+        # 全局默认不满足要求：留到"没有别的选择"时兜底
+        others = [item for item in runtimes if item is not preferred_runtime]
+    else:
+        others = runtimes
+    if required_major is None:
+        return (preferred_runtime or runtimes[0], True)
+    enough = [item for item in others if item.major >= required_major]
+    if enough:
+        return (min(enough, key=lambda item: item.major), True)
+    if preferred_runtime is not None:
+        return (preferred_runtime, False)
+    return (max(runtimes, key=lambda item: item.major), False)

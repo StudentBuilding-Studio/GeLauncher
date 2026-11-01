@@ -282,12 +282,116 @@ class LauncherApp:
         process = self.processes.get(version_id)
         return bool(process is not None and process.poll() is None)
 
+    # ---------------------------------------------------------------- Java 自动安装
+
+    def ensure_java(self, version_id: str) -> bool:
+        """检查版本要求的 Java；缺了就提示自动下载。返回 False 表示先别启动。"""
+        from gelauncher.core.java import choose_java, probe_java
+        from gelauncher.core.models import VersionJsonError
+
+        try:
+            version = self.layout.load_json(version_id)
+        except VersionJsonError:
+            return True
+        required = version.java_version
+        if not required:
+            return True
+
+        settings = self.config.instance(version_id)
+        manual = str(settings.get("java_path") or "").strip()
+        if manual:
+            runtime = probe_java(manual)
+            if runtime is not None and runtime.major >= required:
+                return True
+            reason = (
+                f"手动指定的 Java {runtime.major} 低于要求的 Java {required}"
+                if runtime is not None
+                else f"手动指定的 Java 跑不起来：{manual}"
+            )
+            if not messagebox.askyesno(
+                "Java 不符合要求",
+                f"{reason}。\n\n是否自动下载安装 Temurin JDK {required}？（约 190MB）",
+            ):
+                return True
+            return self._start_java_install(required)
+
+        runtime, satisfied = choose_java(
+            required, self.java_choices(), preferred=self.config.java_path
+        )
+        if satisfied:
+            return True
+        found = []
+        for item in self.java_choices():
+            probed = probe_java(item)
+            if probed is not None:
+                found.append(f"Java {probed.major}")
+        have = "、".join(sorted(set(found))) or "无"
+        if not messagebox.askyesno(
+            "缺少 Java",
+            f"「{version_id}」需要 Java {required}，本机检测到：{have}。\n\n"
+            f"是否自动下载安装 Temurin JDK {required}？（约 190MB）",
+        ):
+            messagebox.showwarning(
+                "没有合适的 Java",
+                f"继续启动可能会失败。可以稍后在设置里手动指定 Java {required}。",
+            )
+            return True
+        return self._start_java_install(required)
+
+    def _start_java_install(self, required: int) -> bool:
+        """下载 Java（带取消按钮），装完提示用户重新启动。返回 False（先别启动游戏）。"""
+        from gelauncher.core.java_install import install_java
+
+        instance = f"Java {required}"
+        token, window = self.begin_task(instance)
+        window.start_session(f"安装 Temurin JDK {required}")
+        window.append(f"[LAUNCHER] 安装位置：{self.layout.root / 'launcher' / 'java'}")
+        window.set_status(f"下载 Java {required}…")
+        fetcher = self.make_fetcher()
+
+        def progress(stage: str, message: str) -> None:
+            self.messages.put(("log", instance, f"[{stage}] {message}"))
+
+        def work() -> None:
+            from gelauncher.core.cancel import Cancelled
+
+            try:
+                runtime = install_java(
+                    self.layout.root,
+                    required,
+                    fetcher=fetcher,
+                    progress=progress,
+                    cancel=token,
+                )
+                self.config.add_java_path(str(runtime.path))
+                self.config.save()
+                self.messages.put(
+                    ("log", instance, f"[LAUNCHER] Java {runtime.major} 已加入候选：{runtime.path}")
+                )
+                self.messages.put(("refresh_java", None))
+                self.messages.put(
+                    ("task_done", ("ok", f"Java {runtime.major} 已安装，现在可以启动了"))
+                )
+            except Cancelled:
+                self.messages.put(("log", instance, "[LAUNCHER] 已取消"))
+                self.messages.put(("task_done", ("cancelled", f"已取消安装 Java {required}")))
+            except Exception as exc:  # noqa: BLE001
+                self.messages.put(("log", instance, f"[ERROR] Java 安装失败：{exc}"))
+                self.messages.put(("task_done", ("error", f"Java {required} 安装失败：{exc}")))
+            finally:
+                self.messages.put(("idle", None))
+
+        self._start_job(work)
+        return False
+
     def launch(self, version_id: str) -> None:
         if self.busy:
             messagebox.showinfo("等一下", "上一个任务还没结束")
             return
         if self.is_running(version_id):
             messagebox.showinfo("已经在跑了", f"{version_id} 已在运行")
+            return
+        if not self.ensure_java(version_id):
             return
 
         settings = self.config.instance(version_id)
@@ -847,6 +951,15 @@ class LauncherApp:
                 elif kind == "java_choices":
                     self.detected_javas = list(message[1])
                     for page in self.pages.values():
+                        refresh = getattr(page, "refresh_java_choices", None)
+                        if callable(refresh):
+                            try:
+                                refresh()
+                            except tk.TclError:
+                                pass
+                elif kind == "refresh_java":
+                    page = self.pages.get("versions")
+                    if page is not None:
                         refresh = getattr(page, "refresh_java_choices", None)
                         if callable(refresh):
                             try:

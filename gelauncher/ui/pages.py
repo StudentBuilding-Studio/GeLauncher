@@ -45,6 +45,9 @@ class Page(ttk.Frame):
 
 
 class VersionsPage(Page):
+    #: 下拉框里的"自动"选项
+    AUTO_JAVA = "自动（按版本要求）"
+
     title = "版本"
 
     def __init__(self, parent: tk.Misc, app) -> None:
@@ -357,15 +360,24 @@ class VersionsPage(Page):
         java_row.columnconfigure(0, weight=1)
         self.java_var = tk.StringVar()
         self.java_combo = ttk.Combobox(
-            java_row, textvariable=self.java_var, values=self.app.java_choices()
+            java_row,
+            textvariable=self.java_var,
+            values=[self.AUTO_JAVA, *self.app.java_choices()],
         )
         self.java_combo.grid(row=0, column=0, sticky="ew")
+        self.java_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_java_hint())
         ttk.Button(java_row, text="…", width=3, command=self._browse_java).grid(
             row=0, column=1, padx=(4, 0)
         )
         ttk.Button(java_row, text="检测", width=6, command=self._detect_java).grid(
             row=0, column=2, padx=(4, 0)
         )
+
+        self.java_hint_var = tk.StringVar(value="")
+        self.java_hint_label = ttk.Label(
+            settings, textvariable=self.java_hint_var, foreground="#666", wraplength=360
+        )
+        self.java_hint_label.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
         ttk.Label(settings, text="窗口尺寸").grid(row=2, column=0, sticky="w", pady=3)
         size_row = ttk.Frame(settings)
@@ -429,6 +441,7 @@ class VersionsPage(Page):
         self._save_job = None
         for variable in (self.memory_var, self.java_var, self.width_var, self.height_var):
             variable.trace_add("write", lambda *_: self._schedule_save())
+        self.java_var.trace_add("write", lambda *_: self._update_java_hint())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
 
     # ---------------------------------------------------------------- 二级页动作
@@ -450,7 +463,9 @@ class VersionsPage(Page):
         settings = self.app.config.instance(version_id)
         memory = settings.get("max_memory_mb")
         self.memory_var.set("" if memory in (None, "") else str(memory))
-        self.java_var.set(str(settings.get("java_path") or ""))
+        java_path = str(settings.get("java_path") or "")
+        self._required_java = version.java_version
+        self.java_var.set(java_path or self.AUTO_JAVA)
         self.width_var.set("" if settings.get("width") in (None, "") else str(settings["width"]))
         self.height_var.set("" if settings.get("height") in (None, "") else str(settings["height"]))
         self.log_window_var.set(bool(settings.get("show_log_window", True)))
@@ -518,7 +533,11 @@ class VersionsPage(Page):
         self.app.config.update_instance(
             version_id,
             max_memory_mb=memory,
-            java_path=self.java_var.get().strip(),
+            java_path=(
+                ""
+                if self.java_var.get().strip() == self.AUTO_JAVA
+                else self.java_var.get().strip()
+            ),
             width=self._int_or_none(self.width_var.get()),
             height=self._int_or_none(self.height_var.get()),
             show_log_window=bool(self.log_window_var.get()),
@@ -554,7 +573,46 @@ class VersionsPage(Page):
         self.app.detect_java()
 
     def refresh_java_choices(self) -> None:
-        self.java_combo.configure(values=self.app.java_choices())
+        self.java_combo.configure(values=[self.AUTO_JAVA, *self.app.java_choices()])
+        self._update_java_hint()
+
+    def _update_java_hint(self) -> None:
+        """在选择框下面显示"自动会选哪个 Java"，不满足版本要求时标红。"""
+        from gelauncher.core.java import choose_java, probe_java_cached
+
+        required = getattr(self, "_required_java", None)
+        value = self.java_var.get().strip()
+        color = "#666"
+        if not value or value == self.AUTO_JAVA:
+            runtime, satisfied = choose_java(
+                required, self.app.java_choices(), preferred=self.app.config.java_path
+            )
+            if runtime is None:
+                text = "自动选择：没检测到可用的 Java，点「检测」或手动指定"
+                color = "#b00020"
+            elif satisfied:
+                text = f"自动选择：Java {runtime.major}（{runtime.path}）"
+            else:
+                text = (
+                    f"自动选择：没找到 Java {required}，会退回 Java {runtime.major}"
+                    f"（{runtime.path}）；建议装 Java {required}"
+                )
+                color = "#b00020"
+        else:
+            runtime = probe_java_cached(value)
+            if runtime is None:
+                text = f"手动指定：{value}（跑不起来）"
+                color = "#b00020"
+            elif required is not None and runtime.major < required:
+                text = f"手动指定：Java {runtime.major} 低于该版本要求的 {required}，可能启动失败"
+                color = "#b00020"
+            else:
+                text = f"手动指定：Java {runtime.major}（{runtime.path}）"
+        self.java_hint_var.set(text)
+        try:
+            self.java_hint_label.configure(foreground=color)
+        except tk.TclError:
+            pass
 
     def _start(self) -> None:
         if self.current:
