@@ -11,6 +11,7 @@ __pycache__/
 build/
 dist/
 *.spec
+!packaging/*.spec
 logs/
 
 # 测试 fixture 里的大 JSON 要保留（体积可接受），别误删

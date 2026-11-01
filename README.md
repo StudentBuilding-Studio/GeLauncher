@@ -131,6 +131,15 @@ gelauncher/
     └── msa_login.py      # 微软登录对话框
 ```
 
+## 打包
+
+```bash
+powershell -ExecutionPolicy Bypass -File packaging/build.ps1
+```
+
+产物是目录分发形式：`dist/GeLauncher/GeLauncher.exe`（同目录下的 `_internal/` 要一起带）。
+CustomTkinter 的主题/字体资源会由 spec 里的 `collect_data_files("customtkinter")` 一并打进去。
+
 ## 进度
 
 - [x] M0 骨架 + 真实 JSON fixture + pytest
