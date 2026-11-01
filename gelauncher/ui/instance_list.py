@@ -92,8 +92,8 @@ class InstanceList(tk.Frame):
         self._last_width = 0
         self._body.bind("<Configure>", self._on_body_configure)
         self._body.bind("<MouseWheel>", self._on_wheel)
-        self._body.bind("<Button-4>", lambda _e: self._body.yview_scroll(-3, "units"))
-        self._body.bind("<Button-5>", lambda _e: self._body.yview_scroll(3, "units"))
+        self._body.bind("<Button-4>", lambda _e: self._scroll_rows(-3))
+        self._body.bind("<Button-5>", lambda _e: self._scroll_rows(3))
         self._body.bind("<Motion>", self._on_motion)
         self._body.bind("<Leave>", lambda _e: self._set_hover(None))
         self._body.bind("<Button-1>", self._on_click)
@@ -312,8 +312,15 @@ class InstanceList(tk.Frame):
         self._hover = iid
         self._schedule_redraw()
 
+    def _scroll_rows(self, rows: int) -> None:
+        self._body.yview_scroll(rows * self.row_height, "units")
+
     def _on_wheel(self, event) -> None:
-        self._body.yview_scroll(int(-event.delta / 120) * 3, "units")
+        """滚轮：一格滚 3 行（yscrollincrement=1，直接传 3 只有 3 像素，慢得离谱）。"""
+        if not event.delta:
+            return
+        notches = -1 if event.delta > 0 else 1
+        self._scroll_rows(notches * 3)
 
     def _apply_selection(self, iid: str) -> None:
         self._selected = iid

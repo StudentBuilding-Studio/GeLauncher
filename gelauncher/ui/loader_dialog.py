@@ -4,10 +4,15 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
+
+import customtkinter as ctk
+
+from gelauncher.ui.instance_list import InstanceList
+from gelauncher.ui.widgets import button, label
 
 
-class LoaderInstallDialog(tk.Toplevel):
+class LoaderInstallDialog(ctk.CTkToplevel):
     """拉取某个实例（对应真实 MC 版本）可用的加载器版本，选一个装进去。"""
 
     def __init__(self, parent: tk.Misc, app, instance: str, actual: str, kind: str, on_choose) -> None:
@@ -22,53 +27,54 @@ class LoaderInstallDialog(tk.Toplevel):
         self.label = LOADER_LABELS.get(kind, kind)
         self.title(f"安装 {self.label}")
         self.transient(parent)
-        self.geometry("460x420")
+        self.geometry("520x480")
+        self.minsize(420, 380)
 
         self.versions: list[str] = []
         self.ready = False
         self._pending: tuple[str, object] | None = None
         self._poll_after: str | None = None
 
-        header = ttk.Frame(self, padding=(10, 10, 10, 0))
-        header.pack(fill="x")
-        ttk.Label(
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.pack(fill="x", padx=14, pady=(14, 6))
+        label(
             header,
-            text=f"{self.instance}（MC {self.actual}）可用的 {self.label} 版本",
+            f"{self.instance}（MC {self.actual}）可用的 {self.label} 版本",
         ).pack(side="left")
 
-        toolbar = ttk.Frame(self, padding=(10, 8, 10, 0))
-        toolbar.pack(fill="x")
-        ttk.Label(toolbar, text="过滤").pack(side="left")
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.pack(fill="x", padx=14, pady=(0, 6))
+        label(toolbar, "过滤").pack(side="left")
         self.filter_var = tk.StringVar()
-        entry = ttk.Entry(toolbar, textvariable=self.filter_var, width=18)
-        entry.pack(side="left", padx=(4, 0))
-        entry.bind("<KeyRelease>", lambda _e: self.refresh_rows())
-        ttk.Button(toolbar, text="刷新", command=self.fetch).pack(side="right")
+        self.filter_entry = ctk.CTkEntry(toolbar, textvariable=self.filter_var, width=180)
+        self.filter_entry.pack(side="left", padx=(6, 0))
+        self.filter_entry.bind("<KeyRelease>", lambda _e: self.refresh_rows())
+        button(toolbar, "刷新", self.fetch).pack(side="right")
 
-        body = ttk.Frame(self, padding=10)
-        body.pack(fill="both", expand=True)
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=14)
         body.rowconfigure(0, weight=1)
         body.columnconfigure(0, weight=1)
-        self.tree = ttk.Treeview(body, show="tree", selectmode="browse")
-        self.tree.column("#0", width=380, stretch=True)
+        self.tree = InstanceList(
+            body,
+            headers=("版本",),
+            column_widths=(380,),
+            on_double=lambda _iid: self.install_selected(),
+        )
         self.tree.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.bind("<Double-1>", lambda _e: self.install_selected())
 
-        bottom = ttk.Frame(self, padding=(10, 0, 10, 10))
-        bottom.pack(fill="x")
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.pack(fill="x", padx=14, pady=(8, 14))
         self.status_var = tk.StringVar(value=f"正在拉取 {self.label} 版本列表…")
-        ttk.Label(bottom, textvariable=self.status_var, foreground="#666").pack(side="left")
-        ttk.Button(bottom, text="取消", command=self.destroy).pack(side="right")
-        self.install_button = ttk.Button(bottom, text="安装", command=self.install_selected)
+        label(bottom, muted=True, textvariable=self.status_var).pack(side="left")
+        button(bottom, "取消", self.destroy).pack(side="right")
+        self.install_button = button(bottom, "安装", self.install_selected, accent=True)
         self.install_button.pack(side="right", padx=(0, 8))
         self.install_button.configure(state="disabled")
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.fetch()
-        self.after(50, self._focus_self)
+        self.after(120, self._focus_self)
 
     def _focus_self(self) -> None:
         try:
@@ -133,7 +139,6 @@ class LoaderInstallDialog(tk.Toplevel):
         from gelauncher.core.install_loader import _version_sort_key
 
         unique = {str(v) for v in versions if v}
-        # 最新的排前面
         self.versions = sorted(unique, key=_version_sort_key, reverse=True)
         self.ready = True
         self.status_var.set(f"共 {len(self.versions)} 个版本")
@@ -165,5 +170,4 @@ class LoaderInstallDialog(tk.Toplevel):
             return
         version = selection[0]
         self.destroy()
-        # 参数顺序必须和 app.install_loader(instance, kind, loader_version) 对齐
         self.on_choose(self.instance, self.kind, version)

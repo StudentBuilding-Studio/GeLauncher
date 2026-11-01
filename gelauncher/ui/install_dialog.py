@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import threading
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox
+
+import customtkinter as ctk
+
+from gelauncher.ui import theme
+from gelauncher.ui.instance_list import InstanceList
+from gelauncher.ui.widgets import Combo, button, label
 
 
-class VanillaInstallDialog(tk.Toplevel):
+class VanillaInstallDialog(ctk.CTkToplevel):
     """列出官方所有版本（正式版 / 快照），选中一个交给启动器安装。"""
 
     MODES = (("正式版", "release"), ("快照", "snapshot"), ("全部", None))
@@ -18,77 +24,70 @@ class VanillaInstallDialog(tk.Toplevel):
         self.on_choose = on_choose
         self.title("安装原版")
         self.transient(parent)
-        self.resizable(True, True)
-        self.geometry("560x520")
+        self.geometry("620x560")
+        self.minsize(520, 420)
 
         self.all_versions: list = []
         self.ready = False
         self._poll_after: str | None = None
         self._pending: tuple[str, object] | None = None
 
-        toolbar = ttk.Frame(self, padding=(10, 10, 10, 0))
-        toolbar.pack(fill="x")
-        ttk.Label(toolbar, text="类型").pack(side="left")
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.pack(fill="x", padx=14, pady=(14, 6))
+        label(toolbar, "类型").pack(side="left")
         self.mode_var = tk.StringVar(value=self.MODES[0][0])
-        combo = ttk.Combobox(
+        self.mode_combo = Combo(
             toolbar,
-            textvariable=self.mode_var,
-            state="readonly",
-            width=8,
-            values=[label for label, _ in self.MODES],
+            variable=self.mode_var,
+            values=[text for text, _ in self.MODES],
+            width=110,
         )
-        combo.pack(side="left", padx=(4, 12))
-        combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_rows())
+        self.mode_combo.pack(side="left", padx=(6, 14))
+        self.mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_rows())
 
-        ttk.Label(toolbar, text="过滤").pack(side="left")
+        label(toolbar, "过滤").pack(side="left")
         self.filter_var = tk.StringVar()
-        entry = ttk.Entry(toolbar, textvariable=self.filter_var, width=16)
-        entry.pack(side="left", padx=(4, 0))
-        entry.bind("<KeyRelease>", lambda _e: self.refresh_rows())
-        ttk.Button(toolbar, text="刷新列表", command=self.fetch).pack(side="right")
+        ctk.CTkEntry(toolbar, textvariable=self.filter_var, width=160).pack(
+            side="left", padx=(6, 0)
+        )
+        self.filter_entry = toolbar.winfo_children()[-1]
+        self.filter_entry.bind("<KeyRelease>", lambda _e: self.refresh_rows())
+        button(toolbar, "刷新列表", self.fetch).pack(side="right")
 
-        body = ttk.Frame(self, padding=10)
-        body.pack(fill="both", expand=True)
+        body = ctk.CTkFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=14)
         body.rowconfigure(0, weight=1)
         body.columnconfigure(0, weight=1)
-
-        self.tree = ttk.Treeview(body, columns=("type", "time"), show="tree headings")
-        self.tree.heading("#0", text="版本")
-        self.tree.heading("type", text="类型")
-        self.tree.heading("time", text="发布时间")
-        self.tree.column("#0", width=260, stretch=True)
-        self.tree.column("type", width=90, anchor="center", stretch=False)
-        self.tree.column("time", width=150, anchor="center", stretch=False)
+        self.tree = InstanceList(
+            body,
+            headers=("版本", "类型", "发布时间"),
+            column_widths=(300, 90, 170),
+            on_double=lambda _iid: self.install_selected(),
+            on_row=lambda _iid: self._sync_instance_name(),
+        )
         self.tree.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(body, orient="vertical", command=self.tree.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.bind("<Double-1>", lambda _e: self.install_selected())
-        # 选中哪个版本，实例名就跟着改成哪个（除非用户手动改过）
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._sync_instance_name())
 
-        bottom = ttk.Frame(self, padding=(10, 0, 10, 10))
-        bottom.pack(fill="x")
-        self.status_var = tk.StringVar(value="正在拉取版本列表…")
-        ttk.Label(bottom, textvariable=self.status_var, foreground="#666").pack(side="left")
-
-        form = ttk.Frame(self, padding=(10, 0, 10, 6))
-        form.pack(fill="x", before=bottom)
-        ttk.Label(form, text="实例名").pack(side="left")
+        form = ctk.CTkFrame(self, fg_color="transparent")
+        form.pack(fill="x", padx=14, pady=(8, 0))
+        label(form, "实例名").pack(side="left")
         self.instance_var = tk.StringVar()
-        self.instance_entry = ttk.Entry(form, textvariable=self.instance_var, width=28)
+        self.instance_entry = ctk.CTkEntry(form, textvariable=self.instance_var, width=280)
         self.instance_entry.pack(side="left", padx=(6, 0))
         self.instance_edited = False
         self.instance_entry.bind("<KeyRelease>", lambda _e: self._mark_edited())
 
-        ttk.Button(bottom, text="取消", command=self.destroy).pack(side="right")
-        self.install_button = ttk.Button(bottom, text="安装", command=self.install_selected)
+        bottom = ctk.CTkFrame(self, fg_color="transparent")
+        bottom.pack(fill="x", padx=14, pady=(8, 14))
+        self.status_var = tk.StringVar(value="正在拉取版本列表…")
+        label(bottom, muted=True, textvariable=self.status_var).pack(side="left")
+        button(bottom, "取消", self.destroy).pack(side="right")
+        self.install_button = button(bottom, "安装", self.install_selected, accent=True)
         self.install_button.pack(side="right", padx=(0, 8))
         self.install_button.configure(state="disabled")
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.fetch()
-        self.after(50, self._focus_self)
+        self.after(120, self._focus_self)
 
     def _focus_self(self) -> None:
         try:
@@ -106,7 +105,6 @@ class VanillaInstallDialog(tk.Toplevel):
         fetcher = self.app.make_fetcher()
 
         def work() -> None:
-            # Tk 不是线程安全的：后台线程只放结果，主线程轮询取走
             from gelauncher.core.install_vanilla import remote_versions
 
             try:
@@ -159,13 +157,12 @@ class VanillaInstallDialog(tk.Toplevel):
     # ------------------------------------------------------------------ 列表
 
     def _current_kind(self) -> str | None:
-        for label, kind in self.MODES:
-            if label == self.mode_var.get():
+        for label_text, kind in self.MODES:
+            if label_text == self.mode_var.get():
                 return kind
         return None
 
     def _mark_edited(self) -> None:
-        # 清空输入框等于"没改过"，选中版本时继续自动填
         self.instance_edited = bool(self.instance_var.get().strip())
 
     def _sync_instance_name(self) -> None:

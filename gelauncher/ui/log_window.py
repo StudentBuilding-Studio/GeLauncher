@@ -11,6 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import customtkinter as ctk
+
+from gelauncher.ui.widgets import button
+
 LEVEL_TAGS = {
     "ERROR": "#ff6b6b",
     "WARN": "#ffd166",
@@ -19,7 +23,7 @@ LEVEL_TAGS = {
 }
 
 
-class LogWindow(tk.Toplevel):
+class LogWindow(ctk.CTkToplevel):
     def __init__(
         self,
         master: tk.Misc,
@@ -41,9 +45,7 @@ class LogWindow(tk.Toplevel):
         self.minsize(560, 280)
 
         self.autoscroll = tk.BooleanVar(value=True)
-        self.status_var = tk.StringVar(
-            value="安装中…" if task else "等待游戏输出…"
-        )
+        self.status_var = tk.StringVar(value="安装中…" if task else "等待游戏输出…")
 
         self._build()
 
@@ -51,22 +53,33 @@ class LogWindow(tk.Toplevel):
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
 
-        toolbar = ttk.Frame(self, padding=(6, 4))
-        toolbar.grid(row=0, column=0, sticky="ew")
-        ttk.Checkbutton(toolbar, text="自动滚动", variable=self.autoscroll).pack(side="left")
-        ttk.Button(toolbar, text="清空", width=8, command=self.clear).pack(side="left", padx=(8, 0))
-        ttk.Button(toolbar, text="保存到…", width=10, command=self.save_as).pack(side="left", padx=6)
-        ttk.Label(toolbar, textvariable=self.status_var, anchor="e").pack(
-            side="right", fill="x", expand=True
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.grid(row=0, column=0, sticky="ew", padx=10, pady=(10, 6))
+        ctk.CTkCheckBox(
+            toolbar,
+            text="自动滚动",
+            variable=self.autoscroll,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).pack(side="left")
+        button(toolbar, "清空", self.clear, width=70, height=30).pack(side="left", padx=(10, 0))
+        button(toolbar, "保存到…", self.save_as, width=90, height=30).pack(
+            side="left", padx=(6, 0)
         )
+        ctk.CTkLabel(
+            toolbar,
+            textvariable=self.status_var,
+            anchor="e",
+            text_color="#6b7280",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).pack(side="right", fill="x", expand=True)
         if self.task and self.on_cancel is not None:
-            self.cancel_button = ttk.Button(
-                toolbar, text="取消", width=8, command=self._do_cancel
+            self.cancel_button = button(
+                toolbar, "取消", self._do_cancel, width=80, height=30, accent=True
             )
             self.cancel_button.pack(side="right", padx=(8, 0))
 
-        frame = ttk.Frame(self, padding=(6, 0, 6, 6))
-        frame.grid(row=1, column=0, sticky="nsew")
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
@@ -77,6 +90,9 @@ class LogWindow(tk.Toplevel):
             font="TkFixedFont",
             background="#1e1e1e",
             foreground="#d4d4d4",
+            relief="flat",
+            borderwidth=0,
+            highlightthickness=0,
         )
         self.text.grid(row=0, column=0, sticky="nsew")
         for tag, color in LEVEL_TAGS.items():
@@ -98,11 +114,7 @@ class LogWindow(tk.Toplevel):
     # ------------------------------------------------------------------
 
     def start_session(self, label: str) -> None:
-        """每次新操作打一条醒目的分隔线。
-
-        之前踩过坑：日志窗口按版本复用，旧内容里留着一句"装好了"，
-        新的安装卡在前面时，用户会以为这次也成功了。
-        """
+        """每次新操作打一条醒目的分隔线。"""
         stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         self.append("")
         self.append("=" * 24 + f" {stamp}  {label} " + "=" * 24)
@@ -121,7 +133,7 @@ class LogWindow(tk.Toplevel):
         self._write_file(line)
 
     def _write_file(self, line: str) -> None:
-        """日志窗口的内容也落盘，出问题时能翻记录（安装日志以前只存在内存里）。"""
+        """日志窗口的内容也落盘，出问题时能翻记录。"""
         if self.log_path is None:
             return
         try:
@@ -157,7 +169,10 @@ class LogWindow(tk.Toplevel):
             return
         default = f"{self.version_id}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
         path = filedialog.asksaveasfilename(
-            parent=self, defaultextension=".log", initialfile=default, filetypes=[("日志", "*.log")]
+            parent=self,
+            defaultextension=".log",
+            initialfile=default,
+            filetypes=[("日志", "*.log")],
         )
         if not path:
             return
