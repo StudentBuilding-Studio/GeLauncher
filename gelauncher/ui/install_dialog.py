@@ -24,7 +24,7 @@ class VanillaInstallDialog(ctk.CTkToplevel):
         self.on_choose = on_choose
         self.title("安装原版")
         self.transient(parent)
-        self.geometry("620x560")
+        self.geometry("760x580")
         self.minsize(520, 420)
 
         self.all_versions: list = []
@@ -41,9 +41,9 @@ class VanillaInstallDialog(ctk.CTkToplevel):
             variable=self.mode_var,
             values=[text for text, _ in self.MODES],
             width=110,
+            command=lambda _value: self.refresh_rows(),
         )
         self.mode_combo.pack(side="left", padx=(6, 14))
-        self.mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.refresh_rows())
 
         label(toolbar, "过滤").pack(side="left")
         self.filter_var = tk.StringVar()

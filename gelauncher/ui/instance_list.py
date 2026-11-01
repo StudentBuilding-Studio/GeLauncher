@@ -209,8 +209,14 @@ class InstanceList(tk.Frame):
 
     def _value_centers(self, width: int, slots: int) -> list[int]:
         widths = list(self.column_widths[1:])[:slots]
+        if widths:
+            available = max(width - 60, 120)
+            total = sum(widths)
+            if total > available * 0.7:
+                factor = (available * 0.7) / total
+                widths = [max(64, int(item * factor)) for item in widths]
         centers: list[int] = []
-        right = width - 16
+        right = width - 10
         for slot_width in reversed(widths):
             right -= slot_width // 2
             centers.append(right)
