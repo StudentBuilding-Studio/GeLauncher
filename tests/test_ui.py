@@ -540,13 +540,13 @@ def test_loader_dialog_lists_and_picks_version(app, monkeypatch):
     )
     chosen: list[tuple[str, str]] = []
     dialog = LoaderInstallDialog(
-        app.root, app, "1.21.8", "1.21.8", "fabric", lambda kind, version: chosen.append((kind, version))
+        app.root, app, "1.21.8", "1.21.8", "fabric", lambda instance, kind, version: chosen.append((instance, kind, version))
     )
     _pump(app.root, 3.0, lambda: dialog.ready)
 
     assert dialog.tree.get_children() == ("0.99.1", "0.99.0"), "最新的排前面"
     dialog.install_selected()
-    assert chosen == [("fabric", "0.99.1")]
+    assert chosen == [("1.21.8", "fabric", "0.99.1")]
 
 def test_install_dialog_instance_name_follows_selection(app, monkeypatch):
     from gelauncher.core.install_vanilla import RemoteVersion

@@ -165,4 +165,5 @@ class LoaderInstallDialog(tk.Toplevel):
             return
         version = selection[0]
         self.destroy()
-        self.on_choose(self.kind, version)
+        # 参数顺序必须和 app.install_loader(instance, kind, loader_version) 对齐
+        self.on_choose(self.instance, self.kind, version)

@@ -333,7 +333,15 @@ class LauncherApp:
     def install_loader(self, instance: str, kind: str, loader_version: str | None = None) -> None:
         from gelauncher.core.install_loader import LOADER_LABELS, loader_of
 
-        name = LOADER_LABELS.get(kind, kind)
+        if kind not in LOADER_LABELS:
+            messagebox.showerror("未知加载器", f"不认识的加载器：{kind}")
+            return
+        if not self.layout.instance_exists(instance):
+            messagebox.showerror(
+                "没有这个实例", f"实例「{instance}」不存在，先用「安装原版…」建一个。"
+            )
+            return
+        name = LOADER_LABELS[kind]
         current = loader_of(self.layout, instance)
         if current == kind:
             return

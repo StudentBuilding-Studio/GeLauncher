@@ -1045,6 +1045,13 @@ def run_installer(
     thread.join(timeout=5)
 
     if returncode != 0:
+        joined = "\n".join(output)
+        if "installClient is not a recognized option" in joined:
+            raise LoaderInstallError(
+                "这个版本的 installer 不支持命令行安装客户端（老的 Forge/NeoForge，"
+                "只有 --installServer）。用 HMCL 装一次，再用 Ge 打开这个实例即可；"
+                "或者换一个更新的加载器版本。"
+            )
         raise LoaderInstallError(
             f"installer 退出码 {returncode}，安装失败。\n最后 50 行输出：\n{tail(output)}"
         )

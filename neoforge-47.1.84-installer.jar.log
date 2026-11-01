@@ -1,0 +1,12 @@
+JVM info: Oracle Corporation - 25.0.5.0.3 - 25.0.5.0.3+1-LTS-2
+java.net.preferIPv4Stack=true
+Current Time: 01/11/2026 18:58:06
+Option                  Description                                           
+------                  -----------                                           
+--debug                 Run in debug mode -- don't delete any files           
+--extract [File]        Extract the contained jar file to the specified       
+                          directory (default: .)                              
+-h, --help              Help with this installer                              
+--installServer [File]  Install a server to the current directory (default: .)
+--mirror <URL>          Use a specific mirror URL                             
+--offline               Don't attempt any network calls                       
