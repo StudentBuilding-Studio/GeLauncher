@@ -716,3 +716,17 @@ def test_same_name_in_other_dir_is_not_running(app):
 
     app.processes[app.instance_key("1.21.8")] = FakeProcess()
     assert app.is_running("1.21.8")
+
+def test_open_dir_buttons(app, monkeypatch):
+    import os
+
+    opened = []
+    monkeypatch.setattr(os, "startfile", lambda path: opened.append(str(path)))
+
+    versions = app.pages["versions"]
+    versions._open_selected_dir()
+    assert opened and opened[-1] == str(app.layout.root)
+
+    versions.open("1.21.8")
+    versions._open_version_dir()
+    assert opened[-1] == str(app.layout.version_dir("1.21.8"))

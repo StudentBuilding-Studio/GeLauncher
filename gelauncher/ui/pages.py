@@ -181,7 +181,7 @@ class VersionsPage(Page):
         ttk.Button(buttons, text="添加目录…", command=self._add_dir).grid(
             row=0, column=0, sticky="ew", padx=(0, 3)
         )
-        ttk.Button(buttons, text="打开目录", command=self._open_dir).grid(
+        ttk.Button(buttons, text="打开游戏目录", command=self._open_selected_dir).grid(
             row=0, column=1, sticky="ew", padx=(3, 0)
         )
         ttk.Button(frame, text="从列表移除", command=self._remove_dir).grid(
@@ -232,15 +232,19 @@ class VersionsPage(Page):
             return
         self.app.remove_game_dir(directory)
 
-    def _open_dir(self) -> None:
+    def _open_selected_dir(self) -> None:
+        """打开目录列表里选中的游戏目录（没选中就打开当前目录）。"""
         import os
 
         selection = self.dir_tree.selection()
         path = selection[0] if selection else str(self.app.layout.root)
-        if Path(path).is_dir():
-            os.startfile(path)  # noqa: S606
-        else:
+        if not Path(path).is_dir():
             messagebox.showwarning("目录不存在", path)
+            return
+        try:
+            os.startfile(path)  # noqa: S606
+        except OSError as exc:
+            messagebox.showerror("打不开目录", f"{path}\n{exc}")
 
     def _on_click(self, event) -> None:
         # 兼容旧调用；点击已由 InstanceList 的 on_row 回调处理
@@ -447,7 +451,7 @@ class VersionsPage(Page):
         ttk.Button(open_panel, text="日志窗口", command=self._open_log).grid(
             row=0, column=0, sticky="ew", padx=(0, 3)
         )
-        ttk.Button(open_panel, text="版本目录", command=self._open_dir).grid(
+        ttk.Button(open_panel, text="版本目录", command=self._open_version_dir).grid(
             row=0, column=1, sticky="ew", padx=(3, 0)
         )
         browse_items = (
@@ -728,7 +732,7 @@ class VersionsPage(Page):
         if self.current:
             self.app.open_log_window(self.current)
 
-    def _open_dir(self) -> None:
+    def _open_version_dir(self) -> None:
         self._browse(None)
 
     def _browse(self, folder: str | None) -> None:
