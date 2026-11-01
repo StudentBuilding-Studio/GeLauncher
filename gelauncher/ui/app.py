@@ -94,13 +94,16 @@ class LauncherApp:
 
     def _build(self) -> None:
         self.root.title(f"Ge 启动器 {__version__}")
-        self.root.minsize(920, 560)
         self.root.columnconfigure(1, weight=1)
         self.root.rowconfigure(0, weight=1)
 
         from gelauncher.ui import theme
 
         scale = getattr(self, "scale", 1.0)
+        if theme.is_ctk(self.root):
+            self.root.minsize(920, 560)
+        else:
+            self.root.minsize(int(920 * scale), int(560 * scale))
         if theme.available():
             import customtkinter as ctk
 
@@ -180,14 +183,41 @@ class LauncherApp:
         self.current_page = ""
 
     def _restore_geometry(self) -> None:
+        """默认窗口大小按屏幕逻辑分辨率算；CTk 的 geometry/minsize 会自动乘缩放。"""
+        from gelauncher.ui import theme
+
         geometry = self.config.window_geometry or ""
+        scale = getattr(self, "scale", 1.0)
+        ctk_root = theme.is_ctk(self.root)
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        # CTk 的 geometry() 接受逻辑像素；普通 Tk 是物理像素
+        view_w = screen_w / scale if ctk_root else screen_w
+        view_h = screen_h / scale if ctk_root else screen_h
+        default_w = min(max(int(view_w * 0.72), 900), 1280)
+        default_h = min(max(int(view_h * 0.78), 600), 820)
+
+        def _apply(width: int, height: int) -> None:
+            if ctk_root:
+                self.root.geometry(f"{width}x{height}")
+            else:
+                self.root.geometry(f"{int(width * scale)}x{int(height * scale)}")
+
         if geometry:
-            try:
-                self.root.geometry(geometry)
-                return
-            except tk.TclError:
-                pass
-        self.root.geometry("1060x700")
+            import re
+
+            match = re.match(r"(\d+)x(\d+)", geometry)
+            fits = True
+            if match:
+                saved_w, saved_h = int(match.group(1)), int(match.group(2))
+                fits = saved_w <= view_w and saved_h <= view_h - 40
+            if fits:
+                try:
+                    self.root.geometry(geometry)
+                    return
+                except tk.TclError:
+                    pass
+        _apply(default_w, default_h)
 
     # ---------------------------------------------------------------- 导航
 
