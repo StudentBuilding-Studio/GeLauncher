@@ -1,10 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
 """PyInstaller 打包配置：pyinstaller --noconfirm --clean packaging/GeLauncher.spec"""
 
+import os
+
 from PyInstaller.utils.hooks import collect_data_files
+
+ICON = os.path.join(SPECPATH, "GeLauncher.ico")
 
 # CustomTkinter 的主题 JSON、字体、图标都在包数据里，必须一起打进去
 datas = collect_data_files("customtkinter")
+
+if os.path.isfile(ICON):
+    datas.append((ICON, "."))
 
 a = Analysis(
     ["entry.py"],
@@ -32,6 +39,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
+    icon=ICON,
 )
 
 coll = COLLECT(

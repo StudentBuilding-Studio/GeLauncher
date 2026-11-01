@@ -50,12 +50,41 @@ def is_ctk(root) -> bool:
     return ctk is not None and isinstance(root, ctk.CTk)
 
 
+def _icon_path() -> str | None:
+    import sys
+    from pathlib import Path
+
+    candidates = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        candidates.append(Path(sys._MEIPASS) / "GeLauncher.ico")
+    repo = Path(__file__).resolve().parents[2]
+    candidates.append(repo / "packaging" / "GeLauncher.ico")
+    for item in candidates:
+        if item.is_file():
+            return str(item)
+    return None
+
+
+def apply_window_icon(root) -> None:
+    path = _icon_path()
+    if path is None:
+        return
+    try:
+        root.iconbitmap(default=path)
+    except Exception:  # noqa: BLE001 - 非 Windows/缺 ico 时忽略
+        pass
+
+
 def make_root() -> tk.Tk:
     if ctk is None:
-        return tk.Tk()
+        root = tk.Tk()
+        apply_window_icon(root)
+        return root
     ctk.set_appearance_mode(_current_mode)
     ctk.set_default_color_theme("blue")
-    return ctk.CTk()
+    root = ctk.CTk()
+    apply_window_icon(root)
+    return root
 
 
 def set_mode(mode: str) -> None:
