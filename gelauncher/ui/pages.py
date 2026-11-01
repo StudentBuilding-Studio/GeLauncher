@@ -391,9 +391,14 @@ class VersionsPage(Page):
         memory_row = ttk.Frame(settings)
         memory_row.grid(row=0, column=1, sticky="ew", pady=3)
         memory_row.columnconfigure(0, weight=1)
+        import customtkinter as ctk
+
         self.memory_var = tk.StringVar()
-        ttk.Spinbox(
-            memory_row, from_=512, to=32768, increment=512, textvariable=self.memory_var, width=10
+        ctk.CTkEntry(
+            memory_row,
+            textvariable=self.memory_var,
+            width=110,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         ).grid(row=0, column=0, sticky="ew")
         ttk.Label(memory_row, text="MB").grid(row=0, column=1, padx=(6, 0))
 
@@ -401,24 +406,35 @@ class VersionsPage(Page):
         java_row = ttk.Frame(settings)
         java_row.grid(row=1, column=1, sticky="ew", pady=3)
         java_row.columnconfigure(0, weight=1)
+        from gelauncher.ui.widgets import Combo, button
+
         self.java_var = tk.StringVar()
-        self.java_combo = ttk.Combobox(
+        self.java_combo = Combo(
             java_row,
-            textvariable=self.java_var,
+            variable=self.java_var,
             values=[self.AUTO_JAVA, *self.app.java_choices()],
+            width=360,
+            command=lambda _value: self._update_java_hint(),
         )
         self.java_combo.grid(row=0, column=0, sticky="ew")
-        self.java_combo.bind("<<ComboboxSelected>>", lambda _e: self._update_java_hint())
-        ttk.Button(java_row, text="…", width=3, command=self._browse_java).grid(
-            row=0, column=1, padx=(4, 0)
+        button(java_row, "…", self._browse_java, width=40, height=30).grid(
+            row=0, column=1, padx=(6, 0)
         )
-        ttk.Button(java_row, text="检测", width=6, command=self._detect_java).grid(
-            row=0, column=2, padx=(4, 0)
+        button(java_row, "检测", self._detect_java, width=70, height=30).grid(
+            row=0, column=2, padx=(6, 0)
         )
 
+        from gelauncher.ui import theme
+
         self.java_hint_var = tk.StringVar(value="")
-        self.java_hint_label = ttk.Label(
-            settings, textvariable=self.java_hint_var, foreground="#666", wraplength=360
+        self.java_hint_label = ctk.CTkLabel(
+            settings,
+            textvariable=self.java_hint_var,
+            anchor="w",
+            justify="left",
+            text_color=theme.MUTED,
+            wraplength=360,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
         self.java_hint_label.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
@@ -427,13 +443,16 @@ class VersionsPage(Page):
         size_row.grid(row=2, column=1, sticky="ew", pady=3)
         self.width_var = tk.StringVar()
         self.height_var = tk.StringVar()
-        ttk.Entry(size_row, textvariable=self.width_var, width=7).grid(row=0, column=0)
-        ttk.Label(size_row, text="×").grid(row=0, column=1, padx=4)
-        ttk.Entry(size_row, textvariable=self.height_var, width=7).grid(row=0, column=2)
+        ctk.CTkEntry(size_row, textvariable=self.width_var, width=80).grid(row=0, column=0)
+        ttk.Label(size_row, text="×").grid(row=0, column=1, padx=6)
+        ctk.CTkEntry(size_row, textvariable=self.height_var, width=80).grid(row=0, column=2)
 
         self.log_window_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            settings, text="启动时打开独立日志窗口", variable=self.log_window_var
+        ctk.CTkCheckBox(
+            settings,
+            text="启动时打开独立日志窗口",
+            variable=self.log_window_var,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 2))
 
         launch_panel = ttk.LabelFrame(body, text="启动", padding=10)
@@ -713,7 +732,7 @@ class VersionsPage(Page):
                 text = f"手动指定：Java {runtime.major}（{runtime.path}）"
         self.java_hint_var.set(text)
         try:
-            self.java_hint_label.configure(foreground=color)
+            self.java_hint_label.configure(text_color=color)
         except tk.TclError:
             pass
 
