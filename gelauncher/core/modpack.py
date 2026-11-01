@@ -489,13 +489,13 @@ def _curse_json(path: str, api_key: str) -> dict:
     """查 CurseForge API：先官方（带 key），被挡就换 mcimirror 代理。"""
     import urllib.request
 
-    attempts: list[tuple[str, dict[str, str]]] = [
-        (
-            f"https://api.curseforge.com/v1{path}",
-            {"X-API-KEY": api_key} if api_key else {},
-        ),
-        (f"{CURSE_API_MIRROR}/v1{path}", {}),
-    ]
+    attempts: list[tuple[str, dict[str, str]]] = []
+    if api_key:
+        attempts.append(
+            (f"https://api.curseforge.com/v1{path}", {"X-API-KEY": api_key})
+        )
+    # 没有 key（或官方被挡）时直接用代理，代理不需要 key
+    attempts.append((f"{CURSE_API_MIRROR}/v1{path}", {}))
     last_error: Exception | None = None
     for url, extra in attempts:
         headers = {"Accept": "application/json", "User-Agent": "gelauncher/0.1"}
