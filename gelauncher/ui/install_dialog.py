@@ -64,6 +64,8 @@ class VanillaInstallDialog(tk.Toplevel):
         scroll.grid(row=0, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.bind("<Double-1>", lambda _e: self.install_selected())
+        # 选中哪个版本，实例名就跟着改成哪个（除非用户手动改过）
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._sync_instance_name())
 
         bottom = ttk.Frame(self, padding=(10, 0, 10, 10))
         bottom.pack(fill="x")
@@ -163,7 +165,8 @@ class VanillaInstallDialog(tk.Toplevel):
         return None
 
     def _mark_edited(self) -> None:
-        self.instance_edited = True
+        # 清空输入框等于"没改过"，选中版本时继续自动填
+        self.instance_edited = bool(self.instance_var.get().strip())
 
     def _sync_instance_name(self) -> None:
         """没手动改过实例名时，跟着选中的版本号自动填。"""

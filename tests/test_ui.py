@@ -547,3 +547,38 @@ def test_loader_dialog_lists_and_picks_version(app, monkeypatch):
     assert dialog.tree.get_children() == ("0.99.1", "0.99.0"), "最新的排前面"
     dialog.install_selected()
     assert chosen == [("fabric", "0.99.1")]
+
+def test_install_dialog_instance_name_follows_selection(app, monkeypatch):
+    from gelauncher.core.install_vanilla import RemoteVersion
+    from gelauncher.ui import install_dialog
+
+    fake = [
+        RemoteVersion(id="1.21.8", type="release", url="u", release_time=""),
+        RemoteVersion(id="1.21.9", type="release", url="u", release_time=""),
+    ]
+    monkeypatch.setattr(
+        "gelauncher.core.install_vanilla.remote_versions", lambda fetcher: list(fake)
+    )
+    dialog = install_dialog.VanillaInstallDialog(app.root, app, lambda v, i: None)
+    _pump(app.root, 3.0, lambda: dialog.ready)
+
+    assert dialog.instance_var.get() == "1.21.8"
+
+    # 选中另一个版本，实例名跟着变
+    dialog.tree.selection_set("1.21.9")
+    app.root.update()
+    assert dialog.instance_var.get() == "1.21.9"
+
+    # 用户手动改过之后就不再自动覆盖
+    dialog.instance_var.set("我的世界")
+    dialog._mark_edited()
+    dialog.tree.selection_set("1.21.8")
+    app.root.update()
+    assert dialog.instance_var.get() == "我的世界"
+
+    # 清空后重新跟随
+    dialog.instance_var.set("")
+    dialog._mark_edited()
+    dialog.tree.selection_set("1.21.9")
+    app.root.update()
+    assert dialog.instance_var.get() == "1.21.9"
