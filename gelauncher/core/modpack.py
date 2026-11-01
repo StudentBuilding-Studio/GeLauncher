@@ -431,6 +431,12 @@ class ModpackReport:
     info: ModpackInfo
     downloads: DownloadReport
     loader_installed: bool = False
+    unresolved: int = 0
+
+    @property
+    def complete(self) -> bool:
+        """所有 Curse 文件都解析到下载地址，且下载没有失败。"""
+        return self.unresolved == 0 and not self.downloads.failures
 
     @property
     def ok(self) -> bool:
@@ -516,13 +522,18 @@ def _curse_json(path: str, api_key: str) -> dict:
     for url, extra in attempts:
         headers = {"Accept": "application/json", "User-Agent": "gelauncher/0.1"}
         headers.update(extra)
-        try:
-            with urllib.request.urlopen(
-                urllib.request.Request(url, headers=headers), timeout=20
-            ) as response:
-                return json.loads(response.read().decode("utf-8"))
-        except Exception as exc:  # noqa: BLE001 - 换下一个入口
-            last_error = exc
+        for attempt in range(2):
+            try:
+                with urllib.request.urlopen(
+                    urllib.request.Request(url, headers=headers), timeout=20
+                ) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except Exception as exc:  # noqa: BLE001 - 换下一个入口
+                last_error = exc
+                if attempt == 0:
+                    import time
+
+                    time.sleep(0.4)
     raise ModpackError(f"查 CurseForge 文件失败：{last_error}")
 
 
@@ -585,25 +596,31 @@ def install_modpack(
 
     root = layout.version_dir(instance)
     jobs: list[DownloadJob] = []
-    unresolved = 0
-    for entry in info.files:
+    unresolved: list[str] = []
+    total = len(info.files)
+    for index, entry in enumerate(info.files, start=1):
         urls = list(entry.urls)
         path = entry.path
-        if not urls and entry.project_id and entry.file_id and curse_api_key:
+        if not urls and entry.project_id and entry.file_id:
             try:
-                name, curse_urls = _curse_file(entry.project_id, entry.file_id, curse_api_key)
+                name, curse_urls = _curse_file(entry.project_id, entry.file_id, curse_api_key or "")
             except Exception as exc:  # noqa: BLE001 - API 查询失败就记账，不中断
-                notify("curse", f"查 CurseForge 文件失败：{exc}")
+                notify(
+                    "curse",
+                    f"[{index}/{total}] 解析 CurseForge 文件失败 "
+                    f"(project {entry.project_id} / file {entry.file_id})：{exc}",
+                )
                 name, curse_urls = None, []
             if name:
                 path = f"mods/{name}"
+                notify("files", f"[{index}/{total}] {name}")
             if curse_urls:
                 urls = curse_urls
         target = _safe_target(root, path)
         if not urls:
             # MCBBS 的 addon 文件本来就在 overrides 里，没有 URL 很正常
             if entry.project_id:
-                unresolved += 1
+                unresolved.append(path or f"project {entry.project_id}")
             continue
         if target is None:
             continue
@@ -617,19 +634,34 @@ def install_modpack(
             )
         )
     if unresolved:
-        note = f"{unresolved} 个文件需要 CurseForge 下载地址"
-        if not curse_api_key:
-            note += "（在设置里填 CurseForge API key 后重新导入）"
+        note = f"{len(unresolved)} 个文件没有解析到下载地址"
         info.notes.append(note)
-        notify("curse", note)
+        notify("curse", note + "：" + "、".join(unresolved[:8]) + ("…" if len(unresolved) > 8 else ""))
     downloads = DownloadReport()
     if jobs:
-        notify("files", f"下载 {len(jobs)} 个整合包文件…")
+        notify("files", f"开始下载 {len(jobs)} 个整合包文件…")
+        done = 0
+
+        def _file_done(job: DownloadJob, result: DownloadReport) -> None:
+            nonlocal done
+            done += 1
+            if result.failures:
+                notify("files", f"[{done}/{len(jobs)}] 失败 {job.label}：{result.failures[0][1][:120]}")
+            else:
+                notify("files", f"[{done}/{len(jobs)}] 完成 {job.label}")
+
         downloads.merge(
-            fetcher.download_all(jobs, should_stop=(cancel.cancelled if cancel else None))
+            fetcher.download_all(
+                jobs,
+                on_done=_file_done,
+                should_stop=(cancel.cancelled if cancel else None),
+            )
         )
+        if downloads.failures:
+            notify("files", f"下载失败 {len(downloads.failures)} 个文件")
 
     notify("overrides", "解压覆盖文件…")
+    override_count = 0
     with zipfile.ZipFile(archive_path) as archive:
         for name in archive.namelist():
             if name.endswith("/"):
@@ -644,6 +676,8 @@ def install_modpack(
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(name) as source, target.open("wb") as sink:
                 sink.write(source.read())
+            override_count += 1
+    notify("overrides", f"覆盖文件解压完成：{override_count} 个")
 
     metadata = {
         "provider": info.provider,
@@ -659,10 +693,15 @@ def install_modpack(
         json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
-    notify("done", f"{instance} 导入完成")
+    notify(
+        "done",
+        f"{instance} 导入完成：下载 {downloads.downloaded} 个、跳过 {downloads.skipped} 个、"
+        f"失败 {len(downloads.failures)} 个、未解析 {len(unresolved)} 个",
+    )
     return ModpackReport(
         instance=instance,
         info=info,
         downloads=downloads,
         loader_installed=loader_installed,
+        unresolved=len(unresolved),
     )

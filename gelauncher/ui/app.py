@@ -366,6 +366,8 @@ class LauncherApp:
                 pass
         if level == "ok":
             messagebox.showinfo("完成", message)
+        elif level == "warning":
+            messagebox.showwarning("导入不完整", message)
         elif level == "cancelled":
             messagebox.showinfo("已取消", message)
         else:
@@ -673,7 +675,20 @@ class LauncherApp:
                 self.messages.put(("status", f"{instance} 导入完成"))
                 self.messages.put(("refresh", report.instance))
                 self.messages.put(("open_version", report.instance))
-                self.messages.put(("task_done", ("ok", f"整合包「{instance}」导入完成")))
+                if getattr(report, "complete", True):
+                    self.messages.put(("task_done", ("ok", f"整合包「{instance}」导入完成")))
+                else:
+                    missing = getattr(report, "unresolved", 0) + len(report.downloads.failures)
+                    self.messages.put(
+                        (
+                            "task_done",
+                            (
+                                "warning",
+                                f"整合包「{instance}」导入完成，但有 {missing} 个文件没装上，"
+                                "游戏可能起不来。\n\n详见日志窗口里的 [files]/[curse] 记录。",
+                            ),
+                        )
+                    )
             except Cancelled:
                 self.cleanup_partial(instance, before_versions, created=True)
                 self.messages.put(("log", instance, "[LAUNCHER] 已取消，清理残留文件"))
