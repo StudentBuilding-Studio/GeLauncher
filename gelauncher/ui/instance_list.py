@@ -75,11 +75,9 @@ class InstanceList(tk.Frame):
         )
         self._body.grid(row=1, column=0, sticky="nsew")
 
-        import customtkinter as ctk
+        from gelauncher.ui.scrollbar import Scrollbar
 
-        self._scrollbar = ctk.CTkScrollbar(
-            self, orientation="vertical", command=self._body.yview
-        )
+        self._scrollbar = Scrollbar(self, orientation="vertical", command=self._body.yview)
         self._scrollbar.grid(row=1, column=1, sticky="ns")
         self._body.configure(yscrollcommand=self._scrollbar.set)
 
@@ -92,7 +90,7 @@ class InstanceList(tk.Frame):
         self._body.bind("<Leave>", lambda _e: self._set_hover(None))
         self._body.bind("<Button-1>", self._on_click)
         self._body.bind("<Double-1>", self._on_double)
-        self._header.bind("<Configure>", lambda _e: self.after(30, self._draw_header))
+        self._header.bind("<Configure>", lambda _e: self.after(80, self._draw_header))
         self._theme_callback = self._on_theme_change
         theme.on_change(self._theme_callback)
 
@@ -183,7 +181,7 @@ class InstanceList(tk.Frame):
 
     def _on_body_configure(self, event) -> None:
         # 拖动窗口时宽度连续变化，只在跨过阈值时重排，避免每帧重绘
-        if abs(event.width - self._last_width) < 8:
+        if abs(event.width - self._last_width) < 14:
             return
         self._last_width = event.width
         self._schedule_redraw()
@@ -192,6 +190,16 @@ class InstanceList(tk.Frame):
         self._redraw_job = None
         canvas = self._body
         width = max(canvas.winfo_width(), 10)
+        signature = (
+            width,
+            len(self._items),
+            self._selected,
+            self._hover,
+            theme.dark(),
+        )
+        if signature == getattr(self, "_last_signature", None):
+            return
+        self._last_signature = signature
         canvas.delete("row")
         y = 0
         for index, (iid, data) in enumerate(self._items.items()):

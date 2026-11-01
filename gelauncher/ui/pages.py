@@ -93,7 +93,7 @@ class VersionsPage(Page):
             sashrelief="flat",
             bd=0,
             bg=theme.bg(),
-            opaqueresize=True,
+            opaqueresize=False,
         )
         body.grid(row=1, column=0, sticky="nsew")
         self.list_frame.rowconfigure(1, weight=1)
@@ -349,177 +349,228 @@ class VersionsPage(Page):
 
     # ---------------------------------------------------------------- 二级页
 
+    def _section_row(self, parent, title: str, subtitle: str = "", control=None):
+        """一行"标题 + 说明 + 右侧控件"，模仿 HMCL 的设置行。"""
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=6)
+        text = ctk.CTkFrame(row, fg_color="transparent")
+        text.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            text,
+            text=title,
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
+        ).pack(fill="x")
+        if subtitle:
+            ctk.CTkLabel(
+                text,
+                text=subtitle,
+                anchor="w",
+                justify="left",
+                wraplength=520,
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
+            ).pack(fill="x", pady=(2, 0))
+        if control is not None:
+            control.pack(side="right", padx=(14, 0))
+        return row
+
     def _build_detail(self) -> None:
-        from gelauncher.ui.widgets import Card, Combo, button, label
+        from gelauncher.ui.widgets import Card, Combo, button
 
         header = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         header.columnconfigure(1, weight=1)
         button(header, "← 返回", self.show_list, width=90).grid(row=0, column=0, sticky="w")
+        titles = ctk.CTkFrame(header, fg_color="transparent")
+        titles.grid(row=0, column=1, sticky="w", padx=12)
         self.title_var = tk.StringVar(value="")
         ctk.CTkLabel(
-            header,
+            titles,
             textvariable=self.title_var,
             anchor="w",
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=16, weight="bold"),
-        ).grid(row=0, column=1, sticky="w", padx=12)
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=18, weight="bold"),
+        ).pack(anchor="w")
         self.detail_status = tk.StringVar(value="")
-        label(header, muted=True, textvariable=self.detail_status).grid(
-            row=0, column=2, sticky="e"
-        )
+        ctk.CTkLabel(
+            titles,
+            textvariable=self.detail_status,
+            anchor="w",
+            text_color=theme.MUTED,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).pack(anchor="w", pady=(2, 0))
+        self.start_button = button(header, "▶ 启动游戏", self._start, accent=True, width=140, height=40)
+        self.start_button.grid(row=0, column=2, sticky="e")
 
         body = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
         self.detail_frame.rowconfigure(1, weight=1)
 
-        info = Card(body, "这个版本")
-        info.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        info_form = info.body
-        info_form.columnconfigure(1, weight=1)
+        nav = ctk.CTkFrame(body, corner_radius=10, fg_color=theme.CARD, width=190)
+        nav.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        nav.grid_propagate(False)
+        nav.columnconfigure(0, weight=1)
+        nav.rowconfigure(6, weight=1)
+        self._detail_nav_buttons: dict[str, ctk.CTkButton] = {}
+        for index, (key, text) in enumerate(
+            (
+                ("basic", "基本设置"),
+                ("game", "游戏设置"),
+                ("install", "自动安装"),
+                ("browse", "浏览"),
+                ("manage", "管理"),
+            ),
+            start=0,
+        ):
+            nav_button = ctk.CTkButton(
+                nav,
+                text=text,
+                anchor="w",
+                height=38,
+                corner_radius=8,
+                fg_color="transparent",
+                text_color=theme.TEXT,
+                hover_color=("#e2e8f0", "#2a2f37"),
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
+                command=lambda name=key: self._show_detail_section(name),
+            )
+            nav_button.grid(row=index, column=0, sticky="ew", padx=8, pady=3)
+            self._detail_nav_buttons[key] = nav_button
+
+        content = ctk.CTkFrame(body, fg_color="transparent")
+        content.grid(row=0, column=1, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+        self._detail_sections: dict[str, ctk.CTkScrollableFrame] = {}
+        for key in ("basic", "game", "install", "browse", "manage"):
+            section = ctk.CTkScrollableFrame(content, fg_color="transparent", corner_radius=0)
+            section.grid(row=0, column=0, sticky="nsew")
+            section.grid_remove()
+            self._detail_sections[key] = section
+
+        # ---------------- 基本设置 ----------------
+        basic = self._detail_sections["basic"]
+        basic_card = Card(basic, "实例信息")
+        basic_card.pack(fill="x", padx=4, pady=(0, 10))
         self.info_vars = {
             key: tk.StringVar(value="-")
-            for key in ("mainClass", "实例", "版本", "assets", "库", "隔离目录")
-        }
-        for index, (text, key) in enumerate(
-            (
-                ("主类", "mainClass"),
-                ("实例", "实例"),
-                ("游戏版本", "版本"),
-                ("资源索引", "assets"),
-                ("库数量", "库"),
-                ("游戏目录", "隔离目录"),
+            for key in (
+                "mainClass",
+                "实例",
+                "版本",
+                "加载器",
+                "assets",
+                "库",
+                "隔离目录",
             )
+        }
+        for text, key in (
+            ("实例名", "实例"),
+            ("游戏版本", "版本"),
+            ("加载器", "加载器"),
+            ("资源索引", "assets"),
+            ("库数量", "库"),
+            ("主类", "mainClass"),
+            ("游戏目录", "隔离目录"),
         ):
-            label(info_form, text).grid(row=index, column=0, sticky="nw", pady=3)
-            ctk.CTkLabel(
-                info_form,
+            value = ctk.CTkLabel(
+                basic_card.body,
                 textvariable=self.info_vars[key],
-                anchor="w",
-                justify="left",
-                wraplength=360,
+                anchor="e",
+                justify="right",
+                wraplength=460,
+                text_color=theme.MUTED,
                 font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-            ).grid(row=index, column=1, sticky="w", pady=3)
-        button(
-            info_form, "删除这个实例…", self._delete_version, danger=True
-        ).grid(row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(14, 0))
+            )
+            self._section_row(basic_card.body, text, control=value)
 
-        settings_card = Card(body, "实例设置")
-        settings_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        settings = settings_card.body
-        settings.columnconfigure(1, weight=1)
+        # ---------------- 游戏设置 ----------------
+        game = self._detail_sections["game"]
+        game_card = Card(game, "游戏设置")
+        game_card.pack(fill="x", padx=4, pady=(0, 10))
 
-        label(settings, "最大内存").grid(row=0, column=0, sticky="w", pady=4)
-        memory_row = ctk.CTkFrame(settings, fg_color="transparent")
-        memory_row.grid(row=0, column=1, sticky="w", pady=4)
-        self.memory_var = tk.StringVar()
-        ctk.CTkEntry(
-            memory_row,
-            textvariable=self.memory_var,
-            width=110,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).grid(row=0, column=0)
-        button(memory_row, "−", lambda: self._step_memory(-512), width=34, height=30).grid(
-            row=0, column=1, padx=(8, 0)
-        )
-        button(memory_row, "+", lambda: self._step_memory(512), width=34, height=30).grid(
-            row=0, column=2, padx=(4, 0)
-        )
-        label(memory_row, "MB", muted=True).grid(row=0, column=3, padx=(8, 0))
-
-        label(settings, "Java 路径").grid(row=1, column=0, sticky="w", pady=4)
-        java_row = ctk.CTkFrame(settings, fg_color="transparent")
-        java_row.grid(row=1, column=1, sticky="ew", pady=4)
-        java_row.columnconfigure(0, weight=1)
+        java_control = ctk.CTkFrame(game_card.body, fg_color="transparent")
         self.java_var = tk.StringVar()
         self.java_combo = Combo(
-            java_row,
+            java_control,
             variable=self.java_var,
             values=[self.AUTO_JAVA, *self.app.java_choices()],
-            width=360,
+            width=320,
             command=lambda _value: self._update_java_hint(),
         )
-        self.java_combo.grid(row=0, column=0, sticky="ew")
-        button(java_row, "…", self._browse_java, width=40, height=30).grid(
-            row=0, column=1, padx=(6, 0)
+        self.java_combo.pack(side="left")
+        button(java_control, "…", self._browse_java, width=38, height=30).pack(
+            side="left", padx=(6, 0)
         )
-        button(java_row, "检测", self._detect_java, width=70, height=30).grid(
-            row=0, column=2, padx=(6, 0)
+        button(java_control, "检测", self._detect_java, width=68, height=30).pack(
+            side="left", padx=(6, 0)
         )
-
+        self._section_row(game_card.body, "游戏 Java", "", java_control)
         self.java_hint_var = tk.StringVar(value="")
         self.java_hint_label = ctk.CTkLabel(
-            settings,
+            game_card.body,
             textvariable=self.java_hint_var,
             anchor="w",
             justify="left",
+            wraplength=620,
             text_color=theme.MUTED,
-            wraplength=360,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
         )
-        self.java_hint_label.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        self.java_hint_label.pack(fill="x", padx=14, pady=(0, 6))
 
-        label(settings, "窗口尺寸").grid(row=2, column=0, sticky="w", pady=4)
-        size_row = ctk.CTkFrame(settings, fg_color="transparent")
-        size_row.grid(row=2, column=1, sticky="w", pady=4)
+        memory_control = ctk.CTkFrame(game_card.body, fg_color="transparent")
+        self.memory_var = tk.StringVar()
+        ctk.CTkEntry(memory_control, textvariable=self.memory_var, width=110).pack(side="left")
+        button(memory_control, "−", lambda: self._step_memory(-512), width=34, height=30).pack(
+            side="left", padx=(8, 0)
+        )
+        button(memory_control, "+", lambda: self._step_memory(512), width=34, height=30).pack(
+            side="left", padx=(4, 0)
+        )
+        ctk.CTkLabel(
+            memory_control,
+            text="MB",
+            text_color=theme.MUTED,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).pack(side="left", padx=(8, 0))
+        self._section_row(game_card.body, "游戏内存", "按需分配，建议 4–8 GB", memory_control)
+
+        size_control = ctk.CTkFrame(game_card.body, fg_color="transparent")
         self.width_var = tk.StringVar()
         self.height_var = tk.StringVar()
-        ctk.CTkEntry(size_row, textvariable=self.width_var, width=80).grid(row=0, column=0)
-        label(size_row, "×", muted=True).grid(row=0, column=1, padx=6)
-        ctk.CTkEntry(size_row, textvariable=self.height_var, width=80).grid(row=0, column=2)
+        ctk.CTkEntry(size_control, textvariable=self.width_var, width=80).pack(side="left")
+        ctk.CTkLabel(
+            size_control,
+            text="×",
+            text_color=theme.MUTED,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).pack(side="left", padx=6)
+        ctk.CTkEntry(size_control, textvariable=self.height_var, width=80).pack(side="left")
+        self._section_row(game_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", size_control)
 
         self.log_window_var = tk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            settings,
-            text="启动时打开独立日志窗口",
+        switch = ctk.CTkSwitch(
+            game_card.body,
+            text="",
             variable=self.log_window_var,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 2))
+            onvalue=True,
+            offvalue=False,
+        )
+        self._section_row(
+            game_card.body,
+            "启动时打开日志窗口",
+            "每次启动都弹一个独立日志窗口，方便看崩溃信息",
+            switch,
+        )
 
-        launch_panel = Card(body, "启动")
-        launch_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(8, 0))
-        launch_panel.body.columnconfigure(0, weight=1)
-        self.start_button = button(
-            launch_panel.body, "▶ 启动游戏", self._start, accent=True, height=42
-        )
-        self.start_button.grid(row=0, column=0, sticky="ew")
-
-        open_panel = Card(body, "浏览")
-        open_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(8, 0))
-        open_panel.body.columnconfigure(0, weight=1)
-        open_panel.body.columnconfigure(1, weight=1)
-        button(open_panel.body, "日志窗口", self._open_log).grid(
-            row=0, column=0, sticky="ew", padx=(0, 3)
-        )
-        button(open_panel.body, "版本目录", self._open_version_dir).grid(
-            row=0, column=1, sticky="ew", padx=(3, 0)
-        )
-        browse_items = (
-            ("世界", "saves"),
-            ("模组", "mods"),
-            ("资源包", "resourcepacks"),
-            ("光影包", "shaderpacks"),
-            ("截图", "screenshots"),
-        )
-        for index, (text, folder) in enumerate(browse_items, start=1):
-            row, column = divmod(index, 2)
-            button(
-                open_panel.body,
-                text,
-                lambda name=folder: self._browse(name),
-            ).grid(
-                row=row,
-                column=column,
-                sticky="ew",
-                pady=(6, 0),
-                padx=(0, 3) if column == 0 else (3, 0),
-            )
-
-        install_panel = Card(body, "自动安装")
-        install_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        install_form = install_panel.body
+        # ---------------- 自动安装 ----------------
+        install = self._detail_sections["install"]
+        install_card = Card(install, "安装加载器")
+        install_card.pack(fill="x", padx=4, pady=(0, 10))
+        install_form = ctk.CTkFrame(install_card.body, fg_color="transparent")
+        install_form.pack(fill="x", padx=14, pady=6)
         for column in range(3):
             install_form.columnconfigure(column, weight=1)
         self.fabric_button = button(
@@ -534,22 +585,90 @@ class VersionsPage(Page):
             install_form, "装 NeoForge", lambda: self._install_loader("neoforge")
         )
         self.neoforge_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
-        self.uninstall_loader_button = button(
-            install_form, "卸载加载器", self._uninstall_loader
-        )
-        self.uninstall_loader_button.grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0), padx=(0, 4)
-        )
-        self.repair_button = button(install_form, "补全文件", self._repair)
-        self.repair_button.grid(row=1, column=2, sticky="ew", pady=(6, 0), padx=(4, 0))
 
-        # 所有设置项都是"改完立即保存"，不再有保存按钮
+        repair_card = Card(install, "维护")
+        repair_card.pack(fill="x", padx=4, pady=(0, 10))
+        self.uninstall_loader_button = button(
+            repair_card.body, "卸载加载器", self._uninstall_loader, width=120
+        )
+        self._section_row(
+            repair_card.body,
+            "卸载加载器",
+            "把实例还原成原版（保留存档和 mods）",
+            self.uninstall_loader_button,
+        )
+        self.repair_button = button(
+            repair_card.body, "补全文件", self._repair, width=120
+        )
+        self._section_row(
+            repair_card.body,
+            "补全缺失文件",
+            "黑屏 / 缺贴图 / 没声音时用，只补缺的文件",
+            self.repair_button,
+        )
+
+        # ---------------- 浏览 ----------------
+        browse = self._detail_sections["browse"]
+        browse_card = Card(browse, "打开目录")
+        browse_card.pack(fill="x", padx=4, pady=(0, 10))
+        browse_items = (
+            ("日志窗口", None),
+            ("版本目录", None),
+            ("世界", "saves"),
+            ("模组", "mods"),
+            ("资源包", "resourcepacks"),
+            ("光影包", "shaderpacks"),
+            ("截图", "screenshots"),
+        )
+        for text, folder in browse_items:
+            if folder is None:
+                if text == "日志窗口":
+                    action = self._open_log
+                else:
+                    action = self._open_version_dir
+            else:
+                action = lambda name=folder: self._browse(name)
+            open_button = button(browse_card.body, "打开", action, width=90)
+            self._section_row(browse_card.body, text, "", open_button)
+
+        # ---------------- 管理 ----------------
+        manage = self._detail_sections["manage"]
+        manage_card = Card(manage, "危险操作")
+        manage_card.pack(fill="x", padx=4, pady=(0, 10))
+        delete_button = button(
+            manage_card.body, "删除这个实例", self._delete_version, danger=True, width=140
+        )
+        self._section_row(
+            manage_card.body,
+            "删除实例",
+            "会删掉整个 versions/<实例> 目录，存档也会一起没，删之前先备份",
+            delete_button,
+        )
+
+        self._show_detail_section("basic")
+
+        # 即时保存 + Java 提示
         self._loading = False
         self._save_job = None
         for variable in (self.memory_var, self.java_var, self.width_var, self.height_var):
             variable.trace_add("write", lambda *_: self._schedule_save())
         self.java_var.trace_add("write", lambda *_: self._update_java_hint())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
+
+    def _show_detail_section(self, name: str) -> None:
+        if name not in self._detail_sections:
+            return
+        for key, section in self._detail_sections.items():
+            if key == name:
+                section.grid()
+            else:
+                section.grid_remove()
+        for key, nav_button in self._detail_nav_buttons.items():
+            active = key == name
+            nav_button.configure(
+                fg_color=theme.ACCENT if active else "transparent",
+                text_color="#ffffff" if active else theme.TEXT,
+            )
 
     def _step_memory(self, delta: int) -> None:
         try:
@@ -600,6 +719,9 @@ class VersionsPage(Page):
         from gelauncher.core.install_loader import LOADER_LABELS, loader_of
 
         current_loader = loader_of(self.app.layout, version_id)
+        self.info_vars["加载器"].set(
+            LOADER_LABELS[current_loader] if current_loader else "原版"
+        )
         for kind, button in (
             ("fabric", self.fabric_button),
             ("forge", self.forge_button),
