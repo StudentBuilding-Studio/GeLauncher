@@ -1,9 +1,9 @@
 @echo off
-rem 双击打开 Ge 启动器界面（保留控制台，方便看报错）
+rem Open the Ge Launcher window and keep the console visible for error output.
 cd /d "%~dp0"
 python -m gelauncher ui %*
 if errorlevel 1 (
   echo.
-  echo 启动失败，错误信息见上方。按任意键关闭。
+  echo Failed to start. See the error above. Press any key to close.
   pause >nul
 )
