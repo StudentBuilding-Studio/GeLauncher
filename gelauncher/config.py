@@ -351,11 +351,23 @@ class Config:
 
     # ---------------------------------------------------------------- 实例
 
-    def instance(self, version_id: str) -> dict[str, Any]:
+    def instance_key(self, version_id: str, root: str | Path | None = None) -> str:
+        """实例设置的键：完整游戏目录（normcase）+ 实例名。
+
+        不同目录里可以存在同名实例，它们的设置必须互不影响。
+        """
+        base = Path(root) if root is not None else self.game_dir_path()
+        try:
+            base = base.resolve()
+        except OSError:
+            pass
+        return f"{os.path.normcase(str(base))}|{version_id}"
+
+    def instance(self, version_id: str, root: str | Path | None = None) -> dict[str, Any]:
         """返回该版本"生效的"设置（实例值优先，缺的用全局默认）。"""
-        stored = self.instances.get(version_id) or {}
+        stored = self.instances.get(self.instance_key(version_id, root)) or {}
         merged = dict(DEFAULT_INSTANCE)
-        merged.update(stored)
+        merged.update({k: v for k, v in stored.items() if k in DEFAULT_INSTANCE})
         if merged["max_memory_mb"] in (None, ""):
             merged["max_memory_mb"] = self.max_memory_mb
         if merged["show_log_window"] is None:
@@ -364,10 +376,13 @@ class Config:
             merged["java_path"] = self.java_path
         return merged
 
-    def update_instance(self, version_id: str, **values: Any) -> None:
-        current = dict(self.instances.get(version_id) or {})
+    def update_instance(
+        self, version_id: str, root: str | Path | None = None, **values: Any
+    ) -> None:
+        key = self.instance_key(version_id, root)
+        current = dict(self.instances.get(key) or {})
         current.update(values)
-        self.instances[version_id] = current
+        self.instances[key] = current
 
-    def forget_instance(self, version_id: str) -> None:
-        self.instances.pop(version_id, None)
+    def forget_instance(self, version_id: str, root: str | Path | None = None) -> None:
+        self.instances.pop(self.instance_key(version_id, root), None)

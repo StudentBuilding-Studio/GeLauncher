@@ -520,7 +520,7 @@ class VersionsPage(Page):
             return
         self.current = version_id
         self._loading = True
-        settings = self.app.config.instance(version_id)
+        settings = self.app.config.instance(version_id, root=self.app.layout.root)
         memory = settings.get("max_memory_mb")
         self.memory_var.set("" if memory in (None, "") else str(memory))
         java_path = str(settings.get("java_path") or "")
@@ -594,6 +594,7 @@ class VersionsPage(Page):
                 return  # 还在输入中，先别存
         self.app.config.update_instance(
             version_id,
+            root=self.app.layout.root,
             max_memory_mb=memory,
             java_path=(
                 ""

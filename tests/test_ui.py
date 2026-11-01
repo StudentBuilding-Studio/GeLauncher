@@ -104,7 +104,7 @@ def test_instance_settings_are_saved_per_version(app, tmp_path: Path):
     versions.log_window_var.set(False)
     versions.save_settings()
 
-    stored = app.config.instances["1.21.8"]
+    stored = app.config.instances[app.config.instance_key("1.21.8", root=app.layout.root)]
     assert stored["max_memory_mb"] == 4096
     assert stored["java_path"] == r"C:\Java\bin\java.exe"
     assert stored["width"] == 1280
@@ -283,7 +283,7 @@ def test_install_loader_logs_target_dir(app, monkeypatch):
     monkeypatch.setattr(core_loader, "attach_fabric", lambda *a, **k: FakeReport())
     app.install_loader("1.21.8", "fabric")
 
-    window = app.log_windows["1.21.8"]
+    window = app.log_windows[app.instance_key("1.21.8")]
     deadline = time.time() + 5
     content = ""
     while time.time() < deadline:
@@ -704,3 +704,15 @@ def test_ensure_java_prompts_when_no_matching_java(app, monkeypatch):
     assert app.ensure_java("1.21.8") is False
     assert called == [21]
     assert asked and "需要 Java 21" in asked[0]
+
+def test_same_name_in_other_dir_is_not_running(app):
+    class FakeProcess:
+        def poll(self):
+            return None
+
+    other = app.layout.root.parent / "other-minecraft"
+    app.processes[app.instance_key("1.21.8", root=other)] = FakeProcess()
+    assert not app.is_running("1.21.8"), "别的目录里的同名实例不应影响当前目录"
+
+    app.processes[app.instance_key("1.21.8")] = FakeProcess()
+    assert app.is_running("1.21.8")

@@ -95,3 +95,15 @@ def test_save_and_reload_roundtrip(tmp_path: Path):
     assert reloaded.selected_account == "Alex"
     assert reloaded.instance("1.21.8")["max_memory_mb"] == 6144
     assert reloaded.java_choices()
+
+def test_instance_settings_keyed_by_full_path(tmp_path):
+    from gelauncher.config import Config
+
+    cfg = Config(game_dir=str(tmp_path / "games" / "a"))
+    cfg.update_instance("1.21.8", root=tmp_path / "games" / "a", max_memory_mb=4096)
+    assert cfg.instance("1.21.8", root=tmp_path / "games" / "a")["max_memory_mb"] == 4096
+    # 同名实例、另一个完整路径：互不影响，回落到全局默认
+    assert cfg.instance("1.21.8", root=tmp_path / "games" / "b")["max_memory_mb"] == cfg.max_memory_mb
+    # 只有目录名相同、父目录不同，也必须区分
+    cfg.update_instance("1.21.8", root=tmp_path / "one" / "mc", max_memory_mb=8192)
+    assert cfg.instance("1.21.8", root=tmp_path / "two" / "mc")["max_memory_mb"] == cfg.max_memory_mb

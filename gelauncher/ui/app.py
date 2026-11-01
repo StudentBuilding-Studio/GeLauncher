@@ -293,30 +293,43 @@ class LauncherApp:
             except tk.TclError:
                 pass
 
-    def log_line(self, version_id: str, text: str) -> None:
-        window = self.log_windows.get(version_id)
+    def instance_key(self, version_id: str, root=None) -> str:
+        """运行状态/日志窗口的键：完整游戏目录 + 实例名（同名实例不同目录互不影响）。"""
+        import os
+
+        base = Path(root) if root is not None else self.layout.root
+        try:
+            base = base.resolve()
+        except OSError:
+            pass
+        return f"{os.path.normcase(str(base))}|{version_id}"
+
+    def log_line(self, target: str, text: str) -> None:
+        key = target if "|" in target else self.instance_key(target)
+        window = self.log_windows.get(key)
         if window is not None:
             try:
                 window.append(text)
             except tk.TclError:
-                self.log_windows.pop(version_id, None)
+                self.log_windows.pop(key, None)
 
     # ---------------------------------------------------------------- 日志窗口
 
     def open_log_window(
         self, version_id: str, *, task: bool = False, on_cancel=None
     ) -> LogWindow:
-        existing = self.log_windows.get(version_id)
+        key = self.instance_key(version_id)
+        existing = self.log_windows.get(key)
         if existing is not None and not task:
             try:
                 existing.deiconify()
                 existing.lift()
                 return existing
             except tk.TclError:
-                self.log_windows.pop(version_id, None)
+                self.log_windows.pop(key, None)
         if existing is not None and task:
             # 安装/导入要用带取消按钮的窗口，旧日志窗口先关掉
-            self.log_windows.pop(version_id, None)
+            self.log_windows.pop(key, None)
             try:
                 existing.destroy()
             except tk.TclError:
@@ -328,13 +341,14 @@ class LauncherApp:
             task=task,
             on_cancel=on_cancel,
         )
+        window.instance_key = key
 
         def forget() -> None:
-            self.log_windows.pop(version_id, None)
+            self.log_windows.pop(key, None)
             window.destroy()
 
         window.protocol("WM_DELETE_WINDOW", forget)
-        self.log_windows[version_id] = window
+        self.log_windows[key] = window
         return window
 
 
@@ -355,9 +369,9 @@ class LauncherApp:
         window = self.task_window
         self.task_window = None
         self.task_token = None
-        instance = getattr(window, "version_id", None)
-        if instance:
-            self.log_windows.pop(instance, None)
+        key = getattr(window, "instance_key", None)
+        if key:
+            self.log_windows.pop(key, None)
         if window is not None:
             try:
                 if window.winfo_exists():
@@ -397,7 +411,7 @@ class LauncherApp:
     # ---------------------------------------------------------------- 游戏进程
 
     def is_running(self, version_id: str) -> bool:
-        process = self.processes.get(version_id)
+        process = self.processes.get(self.instance_key(version_id))
         return bool(process is not None and process.poll() is None)
 
     # ---------------------------------------------------------------- Java 自动安装
@@ -415,7 +429,7 @@ class LauncherApp:
         if not required:
             return True
 
-        settings = self.config.instance(version_id)
+        settings = self.config.instance(version_id, root=self.layout.root)
         manual = str(settings.get("java_path") or "").strip()
         if manual:
             runtime = probe_java(manual)
@@ -512,7 +526,7 @@ class LauncherApp:
         if not self.ensure_java(version_id):
             return
 
-        settings = self.config.instance(version_id)
+        settings = self.config.instance(version_id, root=self.layout.root)
         window = self.open_log_window(version_id) if settings.get("show_log_window", True) else None
         if window is not None:
             window.start_session(f"启动 {version_id}")
@@ -529,52 +543,56 @@ class LauncherApp:
                 height=settings.get("height"),
             )
 
+        key = self.instance_key(version_id)
+
         def work() -> None:
             try:
-                self.messages.put(("log", version_id, f"[LAUNCHER] 账号：{self.config.selected_account}"))
+                self.messages.put(("log", key, f"[LAUNCHER] 账号：{self.config.selected_account}"))
                 account = self.designated_account()
                 plan = prepare(build_options(account))
                 for warning in plan.warnings:
-                    self.messages.put(("log", version_id, f"[WARN] {warning}"))
+                    self.messages.put(("log", key, f"[WARN] {warning}"))
                 log_path = self.layout.root / "logs" / f"gelauncher-{version_id}.log"
-                self.messages.put(("log", version_id, f"[LAUNCHER] 日志文件：{log_path}"))
+                self.messages.put(("log", key, f"[LAUNCHER] 日志文件：{log_path}"))
                 process = run(
                     plan,
                     log_path=log_path,
-                    on_line=lambda line: self.messages.put(("log", version_id, line)),
+                    on_line=lambda line: self.messages.put(("log", key, line)),
                     wait=False,
                 )
-                self.processes[version_id] = process
+                self.processes[key] = process
                 self.messages.put(("status", f"{version_id} 运行中（Java {plan.java.major}）"))
-                self.messages.put(("running", version_id))
+                self.messages.put(("running", key))
                 if window is not None:
-                    self.messages.put(("log_status", version_id, "游戏运行中…"))
+                    self.messages.put(("log_status", key, "游戏运行中…"))
             except Exception as exc:  # noqa: BLE001 - 启动失败要显示出来
-                self.messages.put(("log", version_id, f"[ERROR] 启动失败：{exc}"))
+                self.messages.put(("log", key, f"[ERROR] 启动失败：{exc}"))
                 if window is not None:
-                    self.messages.put(("log_status", version_id, "启动失败"))
+                    self.messages.put(("log_status", key, "启动失败"))
                 self.messages.put(("status", f"启动 {version_id} 失败"))
                 self.messages.put(("error", f"启动失败：{exc}"))
-                self.messages.put(("stopped", version_id))
+                self.messages.put(("stopped", key))
                 return
 
             # 等待游戏退出放到另一个线程：游戏跑着的时候界面不能被 busy 锁住
             def waiter() -> None:
                 code = process.wait()
-                self.messages.put(("log", version_id, f"[LAUNCHER] 游戏退出，退出码 {code}"))
-                self.messages.put(("log_status", version_id, f"已退出（退出码 {code}）"))
+                self.messages.put(("log", key, f"[LAUNCHER] 游戏退出，退出码 {code}"))
+                self.messages.put(("log_status", key, f"已退出（退出码 {code}）"))
                 self.messages.put(("status", f"{version_id} 已退出（退出码 {code}）"))
-                self.messages.put(("stopped", version_id))
+                self.messages.put(("stopped", key))
 
             threading.Thread(target=waiter, daemon=True).start()
 
         self._start_job(work)
 
-    def stop(self, version_id: str) -> None:
-        process = self.processes.get(version_id)
+    def stop(self, target: str) -> None:
+        key = target if "|" in target else self.instance_key(target)
+        process = self.processes.get(key)
         if process is not None and process.poll() is None:
             process.terminate()
-            self.set_status(f"正在结束 {version_id}…")
+            name = key.split("|", 1)[-1]
+            self.set_status(f"正在结束 {name}…")
 
     # ---------------------------------------------------------------- 安装 / 命令
 
@@ -589,7 +607,7 @@ class LauncherApp:
         return resolve_account(self.config)
 
     def print_command(self, version_id: str) -> None:
-        settings = self.config.instance(version_id)
+        settings = self.config.instance(version_id, root=self.layout.root)
         try:
             account = self.designated_account()
         except Exception:  # noqa: BLE001 - 只是打印命令，别因为登录拦住
@@ -1034,11 +1052,13 @@ class LauncherApp:
             pass
 
     def _on_close(self) -> None:
-        running = [name for name in self.processes if self.is_running(name)]
+        running = [
+            key for key in list(self.processes) if self.processes[key].poll() is None
+        ]
         if running and not messagebox.askyesno("游戏还在运行", "有游戏在跑，要一起结束吗？"):
             return
-        for name in running:
-            self.stop(name)
+        for key in running:
+            self.stop(key)
         self.config.window_geometry = self.root.geometry()
         self.config.save()
         for window in list(self.log_windows.values()):
@@ -1058,7 +1078,9 @@ class LauncherApp:
                     self.log_line(version_id, text)
                 elif kind == "log_status":
                     _, version_id, text = message
-                    window = self.log_windows.get(version_id)
+                    window = self.log_windows.get(version_id) or self.log_windows.get(
+                        self.instance_key(version_id)
+                    )
                     if window is not None:
                         try:
                             window.set_status(text)
@@ -1075,7 +1097,8 @@ class LauncherApp:
                         page.detail_status.set(f"下载中 {message[1]}/{message[2]}")
                 elif kind == "running":
                     page = self.pages.get("versions")
-                    if isinstance(page, VersionsPage) and page.current == message[1]:
+                    name = str(message[1]).split("|", 1)[-1]
+                    if isinstance(page, VersionsPage) and page.current == name:
                         page._refresh_running_state()
                 elif kind == "stopped":
                     page = self.pages.get("versions")
