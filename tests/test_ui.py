@@ -315,7 +315,7 @@ def test_detail_page_disables_fabric_button_when_already_attached(app):
     versions = app.pages["versions"]
     versions.open("1.21.8")
     assert str(versions.fabric_button.cget("state")) == "normal"
-    assert str(versions.uninstall_fabric_button.cget("state")) == "disabled"
+    assert str(versions.uninstall_loader_button.cget("state")) == "disabled"
 
     # 模拟"已装 Fabric"：直接改版本 JSON 的 mainClass
     path = app.layout.version_json_path("1.21.8")
@@ -326,7 +326,7 @@ def test_detail_page_disables_fabric_button_when_already_attached(app):
     versions.open("1.21.8")
     assert str(versions.fabric_button.cget("state")) == "disabled"
     assert str(versions.fabric_button.cget("text")) == "已装 Fabric"
-    assert str(versions.uninstall_fabric_button.cget("state")) == "normal"
+    assert str(versions.uninstall_loader_button.cget("state")) == "normal"
 
 
 def test_base_mc_version_follows_inherits(app):
@@ -391,3 +391,95 @@ def test_print_command_opens_log_window_when_ready(app, tmp_path: Path):
         )
     )
     assert "net.minecraft.client.main.Main" in plan.printable_command()
+
+# --------------------------------------------------------------------------- #
+# 这轮 UI 改动：即时保存、删除版本、选版本安装
+# --------------------------------------------------------------------------- #
+
+
+def _pump(root, seconds: float = 2.0, predicate=None) -> None:
+    import time
+
+    deadline = time.time() + seconds
+    while time.time() < deadline:
+        root.update()
+        if predicate is not None and predicate():
+            return
+        time.sleep(0.02)
+
+
+def test_delete_version_removes_directory_and_returns_to_list(app):
+    versions = app.pages["versions"]
+    versions.open("1.21.8")
+    target = app.layout.version_dir("1.21.8")
+    assert target.is_dir()
+
+    app.delete_version("1.21.8")
+    _pump(app.root, 1.0)
+
+    assert not target.exists()
+    assert versions.current is None
+    assert "1.21.8" not in versions.tree.get_children()
+
+
+def test_delete_refuses_running_version(app, monkeypatch):
+    monkeypatch.setattr(app, "is_running", lambda version_id: True)
+    versions = app.pages["versions"]
+    versions.open("1.21.8")
+    target = app.layout.version_dir("1.21.8")
+
+    app.delete_version("1.21.8")
+    _pump(app.root, 0.5)
+    assert target.is_dir(), "正在运行的版本不能删"
+
+
+def test_settings_save_instantly_without_button(app):
+    settings = app.pages["settings"]
+    app.show_page("settings")
+    settings.memory_var.set("4096")
+    settings.save()
+    assert app.config.max_memory_mb == 4096
+
+    settings.log_window_var.set(False)
+    settings.save()
+    assert app.config.show_log_window is False
+
+    # 输入非法内存时不覆盖旧值，也不弹报错
+    settings.memory_var.set("abc")
+    settings.save()
+    assert app.config.max_memory_mb == 4096
+
+
+def test_install_dialog_lists_and_filters_versions(app, monkeypatch):
+    from gelauncher.core.install_vanilla import RemoteVersion
+    from gelauncher.ui import install_dialog
+
+    fake = [
+        RemoteVersion(id="1.21.8", type="release", url="u", release_time="2025-07-01T00:00:00Z"),
+        RemoteVersion(id="1.21.9", type="release", url="u", release_time="2025-08-01T00:00:00Z"),
+        RemoteVersion(
+            id="26.4-snapshot-1", type="snapshot", url="u", release_time="2025-09-01T00:00:00Z"
+        ),
+    ]
+    monkeypatch.setattr(
+        "gelauncher.core.install_vanilla.remote_versions", lambda fetcher: list(fake)
+    )
+
+    chosen: list[str] = []
+    dialog = install_dialog.VanillaInstallDialog(app.root, app, chosen.append)
+    _pump(app.root, 3.0, lambda: dialog.ready)
+
+    assert set(dialog.tree.get_children()) == {"1.21.8", "1.21.9"}
+
+    dialog.mode_var.set("快照")
+    dialog.refresh_rows()
+    assert dialog.tree.get_children() == ("26.4-snapshot-1",)
+
+    dialog.mode_var.set("全部")
+    dialog.filter_var.set("1.21.9")
+    dialog.refresh_rows()
+    assert dialog.tree.get_children() == ("1.21.9",)
+
+    dialog.tree.selection_set("1.21.9")
+    dialog.install_selected()
+    assert chosen == ["1.21.9"]

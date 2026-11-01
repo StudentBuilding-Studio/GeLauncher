@@ -52,6 +52,8 @@ def detect_loader(version) -> str:
         return "Fabric"
     if "quilt" in main_class or "org.quiltmc" in names:
         return "Quilt"
+    if "neoforge" in main_class or "net.neoforged" in names:
+        return "NeoForge"
     if (
         "forge" in main_class
         or "bootstraplauncher" in main_class
@@ -375,6 +377,17 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
                     fetcher=fetcher,
                     progress=progress,
                 )
+        elif args.loader == "neoforge":
+            from .core.install_loader import install_neoforge
+
+            report = install_neoforge(
+                layout,
+                args.mc,
+                fetcher=fetcher,
+                java=java,
+                progress=progress,
+                attach=not args.separate_version,
+            )
         else:
             report = install_forge(
                 layout,
@@ -383,6 +396,7 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
                 fetcher=fetcher,
                 java=java,
                 progress=progress,
+                attach=not args.separate_version,
             )
     except (LoaderInstallError, JavaError) as exc:
         print(f"安装失败：{exc}", file=sys.stderr)
@@ -394,16 +408,13 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
 
 
 def cmd_remove_loader(args: argparse.Namespace, config: Config) -> int:
-    from .core.install_loader import detach_fabric
+    from .core.install_loader import LOADER_LABELS, detach_loader
 
     layout = _make_layout(args, config)
-    if args.loader != "fabric":
-        print("目前只支持卸载 Fabric", file=sys.stderr)
-        return 1
-    if detach_fabric(layout, args.mc):
-        print(f"{args.mc} 已还原成原版")
+    if detach_loader(layout, args.mc):
+        print(f"{args.mc} 已还原成原版（卸载了 {LOADER_LABELS.get(args.loader, '加载器')}）")
         return 0
-    print(f"{args.mc} 没有 Fabric 安装记录（找不到 .vanilla-backup 备份）", file=sys.stderr)
+    print(f"{args.mc} 没有加载器安装记录（找不到 .vanilla-backup 备份）", file=sys.stderr)
     return 1
 
 
@@ -541,9 +552,9 @@ def build_parser() -> argparse.ArgumentParser:
     available.add_argument("--threads", type=int, default=4)
     available.set_defaults(func=cmd_available)
 
-    loader = sub.add_parser("install-loader", help="装 Fabric / Forge（调用官方 installer）")
+    loader = sub.add_parser("install-loader", help="装 Fabric / Forge / NeoForge（默认装进现有版本）")
     _add_common(loader)
-    loader.add_argument("--loader", choices=["fabric", "forge"], required=True)
+    loader.add_argument("--loader", choices=["fabric", "forge", "neoforge"], required=True)
     loader.add_argument("--mc", required=True, help="原版版本，例如 1.21.8（必须是已经装好的）")
     loader.add_argument("--loader-version", help="Fabric loader 版本，默认取最新稳定版")
     loader.add_argument(
@@ -567,7 +578,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     remove_loader = sub.add_parser("remove-loader", help="卸载装进现有版本的加载器（还原原版）")
     _add_common(remove_loader)
-    remove_loader.add_argument("--loader", choices=["fabric"], required=True)
+    remove_loader.add_argument("--loader", choices=["fabric", "forge", "neoforge"], required=True)
     remove_loader.add_argument("--mc", required=True, help="装过加载器的版本 id，例如 1.21.8")
     remove_loader.set_defaults(func=cmd_remove_loader)
 

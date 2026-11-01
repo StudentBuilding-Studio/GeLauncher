@@ -71,6 +71,9 @@ BMCLAPI = Source(
         # 两个加载器的 Maven 仓库：镜像里有同一套坐标（实测 fabric-loader 1.14MB/s）
         ("maven.fabricmc.net", "https://bmclapi2.bangbang93.com/maven"),
         ("maven.minecraftforge.net", "https://bmclapi2.bangbang93.com/maven"),
+        # NeoForge：官方路径带 /releases，镜像里没有这一段
+        ("maven.neoforged.net/releases", "https://bmclapi2.bangbang93.com/maven"),
+        ("maven.neoforged.net", "https://bmclapi2.bangbang93.com/maven"),
     ),
     allow_insecure_tls=True,
 )

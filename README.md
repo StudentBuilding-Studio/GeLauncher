@@ -2,7 +2,7 @@
 
 一个只给几个朋友用的极简 Minecraft: Java Edition 启动器。Python 3.11+ / Tkinter，**无第三方运行时依赖**，不需要编译。
 
-支持原版 / Fabric / Forge，支持离线账号和微软账号，能直接接管 HMCL、PCL2、官方启动器已经装好的 `.minecraft`。
+支持原版 / Fabric / Forge / NeoForge，支持离线账号和微软账号，能直接接管 HMCL、PCL2、官方启动器已经装好的 `.minecraft`。
 
 设计思路见 [简化启动器方案.md](简化启动器方案.md)。
 
@@ -10,10 +10,12 @@
 
 - **启动**：解析版本 JSON、合并 `inheritsFrom`、按规则过滤库、解压 natives、拼 `java` 命令行
 - **安装原版**：官方 version_manifest → 版本 JSON → 库 / assets / 客户端 jar，全程 sha1 校验，多源自动切换
-- **安装加载器**：
-  - **Fabric 装进现有版本**（和 HMCL 一样，不新建版本目录）：直接给 `1.21.8` 装，
-    版本名不变，启动它就是 Fabric；原版 JSON 会备份成 `<id>.json.vanilla-backup`，可随时卸载还原
-  - **Forge** 走官方 installer，会生成一个单独的新版本目录（`<mc>-forge-<ver>`）
+- **安装加载器**（Fabric / Forge / NeoForge，全部装进现有版本，和 HMCL 的 patch 一样）：
+  - 直接给 `1.21.8` 装，版本名不变，启动它就是对应加载器
+  - 原版 JSON 备份成 `<id>.json.vanilla-backup`，随时可以「卸载加载器」还原
+  - 一个版本同时只能装一个加载器；装第二个会提示先卸载
+  - NeoForge 的版本列表走 BMCLAPI 专用接口，installer 需要的库会先用镜像预下载
+    （NeoForge installer 不认 `--mirror`，不预下载会卡在 maven.neoforged.net 超时）
 - **账号**：离线账号 + 微软账号（设备代码流登录，token 过期自动刷新）
 - **界面**：版本 / 账号 / 设置三个一级页面，每个版本有独立设置（内存、Java、分辨率、日志窗口）
 - **日志**：每个游戏进程一个独立日志窗口，可自动滚动 / 清空 / 保存
@@ -38,6 +40,8 @@ python -m gelauncher doctor
 python -m gelauncher install --version-id 1.21.8 --game-dir <目录>   # 装原版
 python -m gelauncher install-loader --loader fabric --mc 1.21.8      # 装 Fabric
 python -m gelauncher install-loader --loader forge  --mc 1.21.8      # 装 Forge
+python -m gelauncher install-loader --loader neoforge --mc 26.3       # 装 NeoForge (26.3 = 26.3.0.x)
+python -m gelauncher remove-loader  --loader fabric --mc 1.21.8      # 卸载还原
 python -m gelauncher launch --version-id 1.21.8 --dry-run            # 只打印命令
 python -m gelauncher launch --version-id 1.21.8                      # 启动
 ```
@@ -86,7 +90,7 @@ gelauncher/
 │   ├── java.py           # 找 Java、按版本挑
 │   ├── net.py            # 下载器：重试 / 多源 / sha1 / .part
 │   ├── install_vanilla.py# 装原版
-│   ├── install_loader.py # 装 Fabric / Forge
+│   ├── install_loader.py # 装 Fabric / Forge / NeoForge（都装进现有版本）
 │   ├── microsoft.py      # 微软登录（设备代码流 → Xbox → Minecraft）
 │   ├── accounts.py       # 把配置里的当前账号变成启动用账号
 │   ├── logfmt.py         # 把游戏 stdout 的 log4j XML 转成可读日志
@@ -105,7 +109,7 @@ gelauncher/
 - [x] M1 离线启动原版 / Fabric / Forge
 - [x] M2 安装原版（manifest + 镜像 + sha1）
 - [x] M3 Fabric（meta profile）
-- [x] M4 Forge（官方 installer + 预置库）
+- [x] M4 Forge / NeoForge（官方 installer + 预置库 + 合并进现有版本）
 - [x] M5 Tkinter UI（版本 / 账号 / 设置 + 独立日志窗口）
 - [ ] M6 打包分发
 

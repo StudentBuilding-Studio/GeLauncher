@@ -311,17 +311,49 @@ def install_fabric(
 # --------------------------------------------------------------------------- #
 # Fabric：装进现有版本（和 HMCL 一样，不新建版本目录）
 # --------------------------------------------------------------------------- #
+# 把加载器装进现有版本（Fabric / Forge / NeoForge 共用）
+#
+# 做法和 HMCL 的 patch 一样：不改版本名，直接把加载器的 mainClass / libraries /
+# arguments 合并进 versions/<id>/<id>.json，原文件先备份，随时可以还原。
+# --------------------------------------------------------------------------- #
 
-FABRIC_BACKUP_SUFFIX = ".vanilla-backup"
+BACKUP_SUFFIX = ".vanilla-backup"
+FABRIC_BACKUP_SUFFIX = BACKUP_SUFFIX  # 兼容旧名字
+
+BMCLAPI_ROOT = "https://bmclapi2.bangbang93.com"
+NEOFORGE_MAVEN = "https://maven.neoforged.net/releases"
+
+LOADER_LABELS = {"fabric": "Fabric", "forge": "Forge", "neoforge": "NeoForge"}
 
 
-def fabric_attached(layout: GameLayout, version_id: str) -> bool:
-    """这个版本是不是已经被"装上 Fabric"了。"""
+def loader_of(layout: GameLayout, version_id: str) -> str | None:
+    """这个版本现在装的是哪个加载器（没有就 None）。"""
     try:
         version = layout.load_json(version_id)
     except VersionJsonError:
-        return False
-    return bool(version.main_class and "fabric" in version.main_class.lower())
+        return None
+    main = (version.main_class or "").lower()
+    names = " ".join(lib.name.lower() for lib in version.libraries)
+    if "knot" in main or "fabric" in main:
+        return "fabric"
+    if "net.neoforged" in names or "neoforge" in main:
+        return "neoforge"
+    if "net.minecraftforge" in names or "forge" in main:
+        return "forge"
+    return None
+
+
+def fabric_attached(layout: GameLayout, version_id: str) -> bool:
+    return loader_of(layout, version_id) == "fabric"
+
+
+def _require_no_other_loader(layout: GameLayout, mc_version: str, loader: str) -> None:
+    current = loader_of(layout, mc_version)
+    if current and current != loader:
+        raise LoaderInstallError(
+            f"{mc_version} 现在装的是 {LOADER_LABELS.get(current, current)}，"
+            f"先卸载它再装 {LOADER_LABELS.get(loader, loader)}。"
+        )
 
 
 def _maven_key(name: str) -> str:
@@ -334,7 +366,7 @@ def _maven_key(name: str) -> str:
 
 
 def _fabric_library_entry(entry: dict) -> dict:
-    """给 Fabric 的库补上 downloads.artifact，别的启动器也能直接用。"""
+    """给只有 name+url 的库（Fabric meta）补上 downloads.artifact。"""
     from .libraries import LibraryError, MavenCoordinate
 
     name = str(entry.get("name") or "")
@@ -346,10 +378,59 @@ def _fabric_library_entry(entry: dict) -> dict:
     base = str(entry.get("url") or FABRIC_MAVEN).rstrip("/") + "/"
     path = coordinate.path
     result.setdefault("downloads", {})
-    result["downloads"] = {
-        "artifact": {"path": path, "url": base + path}
-    }
+    result["downloads"] = {"artifact": {"path": path, "url": base + path}}
     return result
+
+
+def _merge_loader_json(
+    layout: GameLayout, mc_version: str, patch: dict, *, loader: str
+) -> dict:
+    """把加载器的版本 JSON 合并进原版 JSON（原文件备份一次）。"""
+    json_path = layout.version_json_path(mc_version)
+    original_text = json_path.read_text(encoding="utf-8-sig")
+    raw = json.loads(original_text)
+    backup = json_path.with_name(json_path.name + BACKUP_SUFFIX)
+    if not backup.is_file():
+        # 只在第一次装的时候备份，重复安装不会把"已装加载器"的状态备份进去
+        backup.write_text(original_text, encoding="utf-8")
+
+    merged: list[dict] = [dict(item) for item in (raw.get("libraries") or [])]
+    index = {_maven_key(str(item.get("name", ""))): position for position, item in enumerate(merged)}
+    for entry in patch.get("libraries") or []:
+        item = dict(entry)
+        if not item.get("downloads"):
+            item = _fabric_library_entry(item)
+        key = _maven_key(str(item.get("name", "")))
+        if key in index:
+            merged[index[key]] = item
+        else:
+            index[key] = len(merged)
+            merged.append(item)
+    raw["libraries"] = merged
+
+    if patch.get("mainClass"):
+        raw["mainClass"] = patch["mainClass"]
+    if patch.get("jar"):
+        raw["jar"] = patch["jar"]
+
+    base_args = raw.get("arguments") or {}
+    patch_args = patch.get("arguments") or {}
+    merged_args = {}
+    for section in ("jvm", "game"):
+        values = list(base_args.get(section) or [])
+        # 这里不能去重：JVM 参数是有配对关系的（--add-opens <值>、-cp <值>），
+        # 去掉一个同名 token 会让后面的值变成"主类"，实测 NeoForge 26.3 就是这么崩的。
+        values.extend(patch_args.get(section) or [])
+        if values:
+            merged_args[section] = values
+    if merged_args:
+        raw["arguments"] = merged_args
+
+    raw.pop("inheritsFrom", None)
+    raw.setdefault("id", mc_version)
+    raw["_geLoader"] = {"type": loader}
+    json_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    return raw
 
 
 def attach_fabric(
@@ -361,14 +442,10 @@ def attach_fabric(
     progress: ProgressHook | None = None,
     env: Environment | None = None,
 ) -> LoaderReport:
-    """把 Fabric 合并进现有版本（版本 id 不变，启动它即启动 Fabric）。
-
-    做法：改 ``versions/<id>/<id>.json``，原文件备份成 ``<id>.json.vanilla-backup``；
-    库按 ``group:artifact:classifier`` 去重（Fabric 的 asm 会顶掉原版的老版本），
-    mainClass 换成 Fabric 的 KnotClient。
-    """
+    """把 Fabric 合并进现有版本（版本 id 不变，启动它即启动 Fabric）。"""
     fetcher = _ensure_cache(_prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES)), layout)
     require_vanilla(layout, mc_version)
+    _require_no_other_loader(layout, mc_version, "fabric")
     env = env or Environment()
 
     _notify(progress, "resolve", f"查 Fabric loader 版本（MC {mc_version}）…")
@@ -377,47 +454,7 @@ def attach_fabric(
     _notify(progress, "profile", f"取 Fabric profile（loader {loader_version}）…")
     profile = fetch_fabric_profile(fetcher, mc_version, loader_version)
 
-    json_path = layout.version_json_path(mc_version)
-    original_text = json_path.read_text(encoding="utf-8-sig")
-    raw = json.loads(original_text)
-    backup = json_path.with_name(json_path.name + FABRIC_BACKUP_SUFFIX)
-    if not backup.is_file():
-        # 只在第一次装的时候备份，重复安装不会把"已装 Fabric"的状态备份进去
-        backup.write_text(original_text, encoding="utf-8")
-
-    # ---- 合并 libraries（原版在前，Fabric 在后；同名同 classifier 用 Fabric 的）----
-    merged: list[dict] = [dict(item) for item in (raw.get("libraries") or [])]
-    index = {_maven_key(str(item.get("name", ""))): position for position, item in enumerate(merged)}
-    for entry in profile.get("libraries") or []:
-        item = _fabric_library_entry(entry)
-        key = _maven_key(str(item.get("name", "")))
-        if key in index:
-            merged[index[key]] = item
-        else:
-            index[key] = len(merged)
-            merged.append(item)
-
-    raw["libraries"] = merged
-    raw["mainClass"] = profile.get("mainClass") or raw.get("mainClass")
-
-    # ---- 合并 arguments（原版 + Fabric，Fabric 一般只带 game 参数）----
-    base_args = raw.get("arguments") or {}
-    profile_args = profile.get("arguments") or {}
-    merged_args = {}
-    for section in ("jvm", "game"):
-        values = list(base_args.get(section) or [])
-        for item in profile_args.get(section) or []:
-            if item not in values:
-                values.append(item)
-        if values:
-            merged_args[section] = values
-    if merged_args:
-        raw["arguments"] = merged_args
-
-    # 不能自己继承自己
-    raw.pop("inheritsFrom", None)
-    raw.setdefault("id", mc_version)
-    json_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+    raw = _merge_loader_json(layout, mc_version, profile, loader="fabric")
 
     # ---- 下载 Fabric 的库 ----
     merged_version = VersionJson.from_dict(raw, f"merged({mc_version})")
@@ -442,15 +479,128 @@ def attach_fabric(
     return LoaderReport(version_id=mc_version, loader="fabric", downloads=report)
 
 
-def detach_fabric(layout: GameLayout, mc_version: str) -> bool:
-    """卸载 Fabric：把版本 JSON 还原成备份。"""
+def detach_loader(layout: GameLayout, mc_version: str) -> bool:
+    """卸载加载器：把版本 JSON 还原成备份。"""
     json_path = layout.version_json_path(mc_version)
-    backup = json_path.with_name(json_path.name + FABRIC_BACKUP_SUFFIX)
+    backup = json_path.with_name(json_path.name + BACKUP_SUFFIX)
     if not backup.is_file():
         return False
     json_path.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
     backup.unlink(missing_ok=True)
     return True
+
+
+def detach_fabric(layout: GameLayout, mc_version: str) -> bool:
+    return detach_loader(layout, mc_version)
+
+
+# --------------------------------------------------------------------------- #
+# NeoForge：版本列表走 BMCLAPI 的专用接口（和 HMCL 一样）
+# --------------------------------------------------------------------------- #
+
+
+def _neoforge_mc_version(version: str) -> str | None:
+    """从 NeoForge 版本号反推对应的 MC 版本（移植 HMCL 的解析规则）。"""
+    try:
+        first = version.index(".")
+        second = version.index(".", first + 1)
+        major = int(version[:first])
+        if major == 0:  # 快照版
+            return version[first + 1 : second]
+        if major >= 26:
+            third = version.find(".", second + 1)
+            if third < 0:
+                return None
+            ver = version[:second] if int(version[second + 1 : third]) == 0 else version[:third]
+            plus = version.find("+")
+            return ver if plus < 0 else f"{ver}-{version[plus + 1:]}"
+        ver = version[:first] if int(version[first + 1 : second]) == 0 else version[:second]
+        return "1." + ver
+    except ValueError:
+        return None
+
+
+def neoforge_versions(fetcher: Fetcher, mc_version: str) -> list[str]:
+    """列 NeoForge 版本：先 BMCLAPI 专用接口，失败再用官方 maven API。"""
+    from .net import DownloadError
+
+    sources = [
+        (f"{BMCLAPI_ROOT}/neoforge/list/{mc_version}", "bmcl"),
+        (
+            f"{NEOFORGE_MAVEN}/api/maven/versions/releases/net/neoforged/neoforge",
+            "official",
+        ),
+    ]
+    last_error: Exception | None = None
+    for url, kind in sources:
+        try:
+            raw = fetcher.get_bytes(url, label="NeoForge 版本列表", ttl=600)
+        except DownloadError as exc:
+            last_error = exc
+            continue
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        items: list[str] = []
+        if kind == "bmcl" and isinstance(data, list):
+            items = [
+                str(item["version"])
+                for item in data
+                if isinstance(item, dict) and item.get("version")
+            ]
+        elif kind == "official" and isinstance(data, dict):
+            items = [
+                str(version)
+                for version in (data.get("versions") or [])
+                if isinstance(version, str) and _neoforge_mc_version(version) == mc_version
+            ]
+        stable = [v for v in items if "beta" not in v and "alpha" not in v]
+        if stable:
+            return sorted(set(stable), key=_version_sort_key)
+    raise LoaderInstallError(f"查不到 NeoForge 版本（MC {mc_version}）：{last_error}")
+
+
+def latest_neoforge(fetcher: Fetcher, mc_version: str) -> str:
+    versions = neoforge_versions(fetcher, mc_version)
+    if not versions:
+        raise LoaderInstallError(f"MC {mc_version} 没有可用的 NeoForge")
+    return versions[-1]
+
+
+def _new_version_dir(layout: GameLayout, before: set[str]) -> str:
+    after = set(layout.installed_versions())
+    new = after - before
+    if len(new) == 1:
+        return new.pop()
+    if not new:
+        raise LoaderInstallError("installer 跑完了，但没生成新的版本目录")
+    raise LoaderInstallError(f"installer 生成了多个版本目录：{', '.join(sorted(new))}")
+
+
+def _absorb_generated_version(
+    layout: GameLayout, mc_version: str, generated: str, *, loader: str
+) -> None:
+    """把 installer 生成的那个版本合并进原版版本，然后删掉生成目录。"""
+    import shutil
+
+    generated_dir = layout.version_dir(generated)
+    json_path = layout.version_json_path(generated)
+    if not json_path.is_file():
+        raise LoaderInstallError(f"installer 没写出 {generated}.json")
+    patch = json.loads(json_path.read_text(encoding="utf-8-sig"))
+
+    # 老版本（如 1.12.2）会生成一个独立的可执行 jar，搬到原版版本目录里
+    if patch.get("jar"):
+        source = generated_dir / f"{patch['jar']}.jar"
+        if source.is_file():
+            target_name = f"{mc_version}-{loader}"
+            shutil.copy2(source, layout.version_dir(mc_version) / f"{target_name}.jar")
+            patch["jar"] = target_name
+
+    _merge_loader_json(layout, mc_version, patch, loader=loader)
+    if generated != mc_version:
+        shutil.rmtree(generated_dir, ignore_errors=True)
 
 
 def _library_jobs(
@@ -589,10 +739,13 @@ def install_forge(
     java: JavaRuntime | None = None,
     progress: ProgressHook | None = None,
     use_mirror: bool = True,
+    attach: bool = True,
 ) -> LoaderReport:
     fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
     fetcher = _ensure_cache(fetcher, layout)
     require_vanilla(layout, mc_version)
+    if attach:
+        _require_no_other_loader(layout, mc_version, "forge")
 
     _notify(progress, "resolve", f"查 Forge 版本（MC {mc_version}）…")
     forge_version = forge_version or forge_version_for(fetcher, mc_version)
@@ -641,11 +794,109 @@ def install_forge(
         on_line=lambda line: _notify(progress, "log", line),
     )
 
-    version_id = forge_version_id(mc_version, coordinate)
-    verify_installed(layout, version_id, mc_version)
+    generated = forge_version_id(mc_version, coordinate)
+    verify_installed(layout, generated, mc_version)
+    if not attach:
+        return LoaderReport(
+            version_id=generated,
+            loader="forge",
+            installer_path=installer_path,
+            installer_output=output,
+        )
+
+    _absorb_generated_version(layout, mc_version, generated, loader="forge")
+    if loader_of(layout, mc_version) != "forge":
+        raise LoaderInstallError("Forge 合并进原版版本失败")
+    _notify(progress, "done", f"{mc_version} 已装上 Forge（{coordinate}）")
     return LoaderReport(
-        version_id=version_id,
+        version_id=mc_version,
         loader="forge",
+        installer_path=installer_path,
+        installer_output=output,
+    )
+
+
+def install_neoforge(
+    layout: GameLayout,
+    mc_version: str,
+    *,
+    neoforge_version: str | None = None,
+    fetcher: Fetcher | None = None,
+    java: JavaRuntime | None = None,
+    progress: ProgressHook | None = None,
+    use_mirror: bool = True,
+    attach: bool = True,
+) -> LoaderReport:
+    fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
+    fetcher = _ensure_cache(fetcher, layout)
+    require_vanilla(layout, mc_version)
+    if attach:
+        _require_no_other_loader(layout, mc_version, "neoforge")
+
+    _notify(progress, "resolve", f"查 NeoForge 版本（MC {mc_version}）…")
+    version = neoforge_version or latest_neoforge(fetcher, mc_version)
+
+    cache_dir = layout.root / "launcher" / "installers"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    installer_name = f"neoforge-{version}-installer.jar"
+    installer_path = cache_dir / installer_name
+    _notify(progress, "download", f"下载 {installer_name}…")
+    _download_installer(
+        fetcher,
+        [
+            f"{BMCLAPI_ROOT}/neoforge/version/{version}/download/installer.jar",
+            f"{NEOFORGE_MAVEN}/net/neoforged/neoforge/{version}/{installer_name}",
+        ],
+        installer_path,
+        installer_name,
+    )
+
+    java = java or find_java(None)
+    # NeoForge installer 不认 --mirror，会直接连 maven.neoforged.net（实测超时），
+    # 所以先把 install_profile 里的库用我们自己的下载器（带镜像/赛跑）备好。
+    seeded, failures = seed_install_profile_libraries(
+        fetcher, layout, installer_path, progress=progress
+    )
+    if failures:
+        _notify(
+            progress,
+            "seed",
+            f"[警告] {len(failures)} 个库预下载失败："
+            + ", ".join(name for name, _ in failures[:3]),
+        )
+    else:
+        _notify(progress, "seed", f"{seeded} 个库已就位")
+
+    args = ["--installClient", str(layout.root)]
+    if use_mirror:
+        args += ["--mirror", BMCLAPI_MAVEN]
+    before = set(layout.installed_versions())
+    _notify(progress, "install", f"运行 NeoForge installer（Java {java.major}）…")
+    output = run_installer(
+        java,
+        installer_path,
+        args,
+        cwd=layout.root,
+        on_line=lambda line: _notify(progress, "log", line),
+    )
+
+    generated = _new_version_dir(layout, before)
+    verify_installed(layout, generated, mc_version)
+    if not attach:
+        return LoaderReport(
+            version_id=generated,
+            loader="neoforge",
+            installer_path=installer_path,
+            installer_output=output,
+        )
+
+    _absorb_generated_version(layout, mc_version, generated, loader="neoforge")
+    if loader_of(layout, mc_version) != "neoforge":
+        raise LoaderInstallError("NeoForge 合并进原版版本失败")
+    _notify(progress, "done", f"{mc_version} 已装上 NeoForge（{version}）")
+    return LoaderReport(
+        version_id=mc_version,
+        loader="neoforge",
         installer_path=installer_path,
         installer_output=output,
     )

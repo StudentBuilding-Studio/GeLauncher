@@ -22,7 +22,7 @@ from gelauncher import __version__
 from gelauncher.config import Config
 from gelauncher.core import microsoft
 from gelauncher.core.command import Account
-from gelauncher.core.install_loader import install_fabric, install_forge
+from gelauncher.core.install_loader import install_forge  # noqa: F401  （install_forge 仍被旧代码引用）
 from gelauncher.core.install_vanilla import install_version
 from gelauncher.core.java import installed_javas
 from gelauncher.core.launch import LaunchOptions, prepare, run
@@ -345,12 +345,17 @@ class LauncherApp:
         return Fetcher(sources=sources_for(self.config.download_source))
 
     def install_loader(self, base_version: str, kind: str) -> None:
-        name = "Fabric" if kind == "fabric" else "Forge"
-        # Fabric 是"装进现有版本"的安全操作（原版 JSON 有备份、可卸载），
-        # 不再弹确认框；Forge 会生成新版本，仍然问一句。
-        if kind != "fabric":
-            if not messagebox.askyesno(f"装 {name}", f"给 {base_version} 装 {name}？"):
-                return
+        from gelauncher.core.install_loader import LOADER_LABELS, loader_of
+
+        name = LOADER_LABELS.get(kind, kind)
+        current = loader_of(self.layout, base_version)
+        if current == kind:
+            return
+        if current is not None:
+            messagebox.showwarning(
+                "已经有加载器", f"{base_version} 现在装的是 {LOADER_LABELS[current]}，先卸载它。"
+            )
+            return
         log_window = self.open_log_window(base_version)
         log_window.start_session(f"给 {base_version} 安装 {name}")
         log_window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
@@ -362,15 +367,19 @@ class LauncherApp:
             self.messages.put(("log", base_version, f"[{stage}] {message}"))
 
         def work() -> None:
+            from gelauncher.core import install_loader as loaders
+
             try:
                 if kind == "fabric":
-                    from gelauncher.core.install_loader import attach_fabric
-
-                    report = attach_fabric(
+                    report = loaders.attach_fabric(
+                        self.layout, base_version, progress=progress, fetcher=fetcher
+                    )
+                elif kind == "neoforge":
+                    report = loaders.install_neoforge(
                         self.layout, base_version, progress=progress, fetcher=fetcher
                     )
                 else:
-                    report = install_forge(
+                    report = loaders.install_forge(
                         self.layout, base_version, progress=progress, fetcher=fetcher
                     )
                 self.messages.put(("log", base_version, f"[LAUNCHER] 装好了：{report.version_id}"))
@@ -387,17 +396,54 @@ class LauncherApp:
 
         self._start_job(work)
 
-    def detach_fabric(self, version_id: str) -> None:
-        from gelauncher.core.install_loader import detach_fabric
+    def detach_loader(self, version_id: str) -> None:
+        from gelauncher.core.install_loader import LOADER_LABELS, detach_loader, loader_of
 
-        if not messagebox.askyesno("卸载 Fabric", f"把 {version_id} 还原成原版？"):
+        current = loader_of(self.layout, version_id)
+        if current is None:
             return
-        if detach_fabric(self.layout, version_id):
+        if not messagebox.askyesno(
+            "卸载加载器", f"把 {version_id} 还原成原版（卸载 {LOADER_LABELS[current]}）？"
+        ):
+            return
+        if detach_loader(self.layout, version_id):
             self.set_status(f"{version_id} 已还原成原版")
             self.messages.put(("refresh", version_id))
             self.messages.put(("open_version", version_id))
         else:
-            messagebox.showinfo("没有备份", "这个版本没有 Fabric 安装记录，可能不是 Ge 装的")
+            messagebox.showinfo("没有备份", "这个版本没有加载器安装记录，可能不是 Ge 装的")
+
+    # 兼容旧调用点
+    def detach_fabric(self, version_id: str) -> None:
+        self.detach_loader(version_id)
+
+    def delete_version(self, version_id: str) -> None:
+        """删除版本目录（只删 versions/<id>，不碰 libraries/assets）。"""
+        import shutil
+
+        if self.is_running(version_id):
+            messagebox.showwarning("游戏还在运行", f"{version_id} 正在运行，先关掉游戏再删。")
+            return
+        target = self.layout.version_dir(version_id)
+        if not target.is_dir():
+            messagebox.showinfo("找不到版本目录", str(target))
+            return
+        if not messagebox.askyesno(
+            "删除版本",
+            f"确定删除 {version_id}？\n\n会删掉整个版本目录：\n{target}\n\n"
+            "存档在 versions/<id>/saves 里的话也会一起没，删之前先备份。",
+        ):
+            return
+        try:
+            shutil.rmtree(target)
+        except OSError as exc:
+            messagebox.showerror("删除失败", str(exc))
+            return
+        self.set_status(f"已删除 {version_id}")
+        page = self.pages.get("versions")
+        if page is not None:
+            page.show_list()
+            page.refresh()
 
     def install_vanilla(self, version_id: str) -> None:
         window = self.open_log_window(version_id)
@@ -464,9 +510,6 @@ class LauncherApp:
     def add_java_path(self, path: str) -> None:
         if self.config.add_java_path(path):
             self.config.save()
-            self.set_status(f"已记住 Java：{path}")
-        else:
-            self.set_status(f"这个 Java 已经在列表里：{path}")
 
     def detect_java(self) -> None:
         """后台扫一遍本机 Java，把找到的路径全部塞进下拉框。"""
@@ -481,9 +524,8 @@ class LauncherApp:
             if changed:
                 self.config.save()
             self.messages.put(("java_choices", pairs))
-            self.messages.put(
-                ("status", f"检测到 {len(pairs)} 个 Java，已加入下拉列表" if pairs else "没找到可用的 Java")
-            )
+            if not pairs:
+                self.messages.put(("status", "没找到可用的 Java"))
 
         self._start_job(work)
 
@@ -557,11 +599,11 @@ class LauncherApp:
                 elif kind == "running":
                     page = self.pages.get("versions")
                     if isinstance(page, VersionsPage) and page.current == message[1]:
-                        page.stop_button.configure(state="normal")
+                        page._refresh_running_state()
                 elif kind == "stopped":
                     page = self.pages.get("versions")
                     if isinstance(page, VersionsPage) and page.current == message[1]:
-                        page.stop_button.configure(state="disabled")
+                        page._refresh_running_state()
                     self.processes.pop(message[1], None)
                 elif kind == "refresh":
                     target = message[1] if len(message) > 1 else None

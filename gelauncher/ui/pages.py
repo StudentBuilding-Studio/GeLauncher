@@ -78,14 +78,6 @@ class VersionsPage(Page):
         ttk.Label(header, textvariable=self.dir_hint_var, foreground="#666").grid(
             row=0, column=1, sticky="w", padx=10
         )
-        ttk.Label(header, text="过滤").grid(row=0, column=2, padx=(0, 4))
-        entry = ttk.Entry(header, textvariable=self.filter_var, width=18)
-        entry.grid(row=0, column=3)
-        entry.bind("<KeyRelease>", lambda _e: self.refresh())
-        ttk.Button(header, text="安装原版…", width=11, command=self._install_vanilla).grid(
-            row=0, column=4, padx=(8, 0)
-        )
-        ttk.Button(header, text="刷新", width=8, command=self.refresh).grid(row=0, column=5, padx=(6, 0))
 
         body = ttk.Frame(self.list_frame)
         body.grid(row=1, column=0, sticky="nsew")
@@ -99,7 +91,22 @@ class VersionsPage(Page):
         versions = ttk.LabelFrame(body, text="已安装的版本", padding=6)
         versions.grid(row=0, column=1, sticky="nsew")
         versions.columnconfigure(0, weight=1)
-        versions.rowconfigure(0, weight=1)
+        versions.rowconfigure(1, weight=1)
+
+        # 过滤 / 安装原版 / 刷新 都放进"已安装的版本"板块里
+        toolbar = ttk.Frame(versions)
+        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        toolbar.columnconfigure(1, weight=1)
+        ttk.Label(toolbar, text="过滤").grid(row=0, column=0, padx=(0, 4))
+        entry = ttk.Entry(toolbar, textvariable=self.filter_var, width=18)
+        entry.grid(row=0, column=1, sticky="w")
+        entry.bind("<KeyRelease>", lambda _e: self.refresh())
+        ttk.Button(toolbar, text="安装原版…", width=11, command=self._install_vanilla).grid(
+            row=0, column=2, padx=(8, 0)
+        )
+        ttk.Button(toolbar, text="刷新", width=8, command=self.refresh).grid(
+            row=0, column=3, padx=(6, 0)
+        )
 
         self.tree = ttk.Treeview(
             versions, columns=("loader", "java"), show="tree headings", selectmode="browse"
@@ -110,15 +117,11 @@ class VersionsPage(Page):
         self.tree.column("#0", width=300, stretch=True)
         self.tree.column("loader", width=90, anchor="center", stretch=False)
         self.tree.column("java", width=70, anchor="center", stretch=False)
-        self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree.grid(row=1, column=0, sticky="nsew")
         scroll = ttk.Scrollbar(versions, orient="vertical", command=self.tree.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
+        scroll.grid(row=1, column=1, sticky="ns")
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.bind("<ButtonRelease-1>", self._on_click)
-
-        ttk.Label(
-            self.list_frame, text="单击版本进入设置页；左侧目录列表可以切换/添加游戏目录", foreground="#666"
-        ).grid(row=2, column=0, sticky="w", pady=(8, 0))
 
     def _build_dir_list(self, parent) -> None:
         frame = ttk.LabelFrame(parent, text="目录列表", padding=6)
@@ -208,16 +211,9 @@ class VersionsPage(Page):
             self.open(row)
 
     def _install_vanilla(self) -> None:
-        from tkinter import simpledialog
+        from gelauncher.ui.install_dialog import VanillaInstallDialog
 
-        version_id = simpledialog.askstring(
-            "安装原版",
-            "要装的版本 id（例如 1.21.8、1.21.4、1.20.1）：",
-            parent=self,
-            initialvalue="1.21.8",
-        )
-        if version_id:
-            self.app.install_vanilla(version_id.strip())
+        VanillaInstallDialog(self, self.app, self.app.install_vanilla)
 
     def refresh(self, select: str | None = None) -> None:
         self.tree.delete(*self.tree.get_children())
@@ -299,6 +295,10 @@ class VersionsPage(Page):
                 row=index, column=1, sticky="w", pady=2
             )
 
+        ttk.Button(info, text="删除这个版本…", command=self._delete_version).grid(
+            row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(12, 0)
+        )
+
         settings = ttk.LabelFrame(body, text="版本设置", padding=10)
         settings.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         settings.columnconfigure(1, weight=1)
@@ -337,54 +337,57 @@ class VersionsPage(Page):
         ttk.Entry(size_row, textvariable=self.width_var, width=7).grid(row=0, column=0)
         ttk.Label(size_row, text="×").grid(row=0, column=1, padx=4)
         ttk.Entry(size_row, textvariable=self.height_var, width=7).grid(row=0, column=2)
-        ttk.Label(size_row, text="留空用游戏默认", foreground="#666").grid(
-            row=0, column=3, padx=(8, 0)
-        )
 
         self.log_window_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             settings, text="启动时打开独立日志窗口", variable=self.log_window_var
         ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 2))
 
-        ttk.Button(settings, text="保存设置", command=self.save_settings).grid(
-            row=4, column=0, columnspan=2, sticky="ew", pady=(8, 0)
-        )
-
-        ttk.Separator(settings).grid(row=5, column=0, columnspan=2, sticky="ew", pady=10)
-
-        buttons = ttk.Frame(settings)
-        buttons.grid(row=6, column=0, columnspan=2, sticky="nsew")
-        buttons.columnconfigure(0, weight=1)
-        buttons.columnconfigure(1, weight=1)
+        launch_panel = ttk.LabelFrame(body, text="启动", padding=10)
+        launch_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(8, 0))
+        launch_panel.columnconfigure(0, weight=1)
         self.start_button = ttk.Button(
-            buttons, text="▶ 启动", style="Accent.TButton", command=self._start
+            launch_panel, text="▶ 启动游戏", style="Accent.TButton", command=self._start
         )
-        self.start_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        self.stop_button = ttk.Button(
-            buttons, text="■ 结束", command=self._stop, state="disabled"
+        self.start_button.grid(row=0, column=0, sticky="ew", ipady=6)
+
+        open_panel = ttk.LabelFrame(body, text="打开", padding=10)
+        open_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(8, 0))
+        open_panel.columnconfigure(0, weight=1)
+        ttk.Button(open_panel, text="打开日志窗口", command=self._open_log).grid(
+            row=0, column=0, sticky="ew"
         )
-        self.stop_button.grid(row=0, column=1, sticky="ew", padx=(4, 0))
-        ttk.Button(buttons, text="打开日志窗口", command=self._open_log).grid(
-            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        ttk.Button(open_panel, text="打开版本目录", command=self._open_dir).grid(
+            row=1, column=0, sticky="ew", pady=(6, 0)
         )
-        ttk.Button(buttons, text="打开版本目录", command=self._open_dir).grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
-        )
-        ttk.Button(buttons, text="打印启动命令", command=self._print_command).grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 0)
-        )
+
+        install_panel = ttk.LabelFrame(body, text="自动安装", padding=10)
+        install_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        for column in range(3):
+            install_panel.columnconfigure(column, weight=1)
         self.fabric_button = ttk.Button(
-            buttons, text="给这个版本装 Fabric", command=lambda: self._install_loader("fabric")
+            install_panel, text="装 Fabric", command=lambda: self._install_loader("fabric")
         )
-        self.fabric_button.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.fabric_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
         self.forge_button = ttk.Button(
-            buttons, text="给这个版本装 Forge", command=lambda: self._install_loader("forge")
+            install_panel, text="装 Forge", command=lambda: self._install_loader("forge")
         )
-        self.forge_button.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        self.uninstall_fabric_button = ttk.Button(
-            buttons, text="卸载 Fabric（还原原版）", command=self._uninstall_fabric
+        self.forge_button.grid(row=0, column=1, sticky="ew", padx=4)
+        self.neoforge_button = ttk.Button(
+            install_panel, text="装 NeoForge", command=lambda: self._install_loader("neoforge")
         )
-        self.uninstall_fabric_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.neoforge_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
+        self.uninstall_loader_button = ttk.Button(
+            install_panel, text="卸载加载器", command=self._uninstall_loader
+        )
+        self.uninstall_loader_button.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+
+        # 所有设置项都是"改完立即保存"，不再有保存按钮
+        self._loading = False
+        self._save_job = None
+        for variable in (self.memory_var, self.java_var, self.width_var, self.height_var):
+            variable.trace_add("write", lambda *_: self._schedule_save())
+        self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
 
     # ---------------------------------------------------------------- 二级页动作
 
@@ -401,6 +404,7 @@ class VersionsPage(Page):
             messagebox.showerror("读不了版本", str(exc))
             return
         self.current = version_id
+        self._loading = True
         settings = self.app.config.instance(version_id)
         memory = settings.get("max_memory_mb")
         self.memory_var.set("" if memory in (None, "") else str(memory))
@@ -419,47 +423,68 @@ class VersionsPage(Page):
         self.info_vars["库"].set(str(len(version.libraries)))
         self.info_vars["隔离目录"].set(str(self.app.layout.version_dir(version_id)))
         self.detail_status.set(f"Java {version.java_version or '?'}")
-        # Fabric 是"装进现有版本"的：装过就禁用安装按钮、放开卸载按钮
-        from gelauncher.core.install_loader import fabric_attached
+        # 加载器是"装进现有版本"的：装过就禁用安装按钮，任何一个都可以卸载还原
+        from gelauncher.core.install_loader import LOADER_LABELS, loader_of
 
-        has_fabric = fabric_attached(self.app.layout, version_id)
-        is_forge = "-forge-" in version_id
-        self.fabric_button.configure(
-            state="disabled" if has_fabric else "normal",
-            text="已装 Fabric" if has_fabric else "给这个版本装 Fabric",
-        )
-        self.uninstall_fabric_button.configure(state="normal" if has_fabric else "disabled")
-        self.forge_button.configure(
-            state="disabled" if is_forge else "normal",
-            text="这已经是 Forge 版本" if is_forge else "给这个版本装 Forge",
-        )
+        current_loader = loader_of(self.app.layout, version_id)
+        for kind, button in (
+            ("fabric", self.fabric_button),
+            ("forge", self.forge_button),
+            ("neoforge", self.neoforge_button),
+        ):
+            label = LOADER_LABELS[kind]
+            installed = current_loader == kind
+            blocked = current_loader is not None and not installed
+            button.configure(
+                state="disabled" if installed or blocked else "normal",
+                text=f"已装 {label}" if installed else f"装 {label}",
+            )
+        self.uninstall_loader_button.configure(state="normal" if current_loader else "disabled")
         self.refresh_java_choices()
         self._refresh_running_state()
+        self._loading = False
 
         self.list_frame.grid_remove()
         self.detail_frame.grid()
 
-    def save_settings(self) -> None:
-        if not self.current:
+    # ---------------------------------------------------------------- 即时保存
+
+    def _schedule_save(self) -> None:
+        """改一下就存；用 400ms 防抖，避免每敲一个字符写一次文件。"""
+        if getattr(self, "_loading", False) or not self.current:
             return
+        if self._save_job is not None:
+            try:
+                self.after_cancel(self._save_job)
+            except tk.TclError:
+                pass
+        self._save_job = self.after(400, self._save_now)
+
+    def _save_now(self) -> None:
+        self._save_job = None
         version_id = self.current
-        try:
-            memory = int(self.memory_var.get()) if self.memory_var.get().strip() else None
-        except ValueError:
-            messagebox.showerror("内存填错了", "最大内存要填整数（MB）")
+        if not version_id:
             return
-        width = self._int_or_none(self.width_var.get())
-        height = self._int_or_none(self.height_var.get())
+        text = self.memory_var.get().strip()
+        memory: int | None = None
+        if text:
+            try:
+                memory = int(text)
+            except ValueError:
+                return  # 还在输入中，先别存
         self.app.config.update_instance(
             version_id,
             max_memory_mb=memory,
             java_path=self.java_var.get().strip(),
-            width=width,
-            height=height,
+            width=self._int_or_none(self.width_var.get()),
+            height=self._int_or_none(self.height_var.get()),
             show_log_window=bool(self.log_window_var.get()),
         )
         self.app.config.save()
-        self.app.set_status(f"{version_id} 的设置已保存")
+
+    def save_settings(self) -> None:
+        """兼容旧调用点：立即把当前值落盘。"""
+        self._save_now()
 
     @staticmethod
     def _int_or_none(text: str) -> int | None:
@@ -490,12 +515,14 @@ class VersionsPage(Page):
 
     def _start(self) -> None:
         if self.current:
-            self.save_settings()
+            if self._save_job is not None:
+                try:
+                    self.after_cancel(self._save_job)
+                except tk.TclError:
+                    pass
+                self._save_job = None
+            self._save_now()
             self.app.launch(self.current)
-
-    def _stop(self) -> None:
-        if self.current:
-            self.app.stop(self.current)
 
     def _open_log(self) -> None:
         if self.current:
@@ -510,21 +537,24 @@ class VersionsPage(Page):
         else:
             messagebox.showwarning("目录不存在", str(path))
 
-    def _print_command(self) -> None:
-        if self.current:
-            self.app.print_command(self.current)
-
     def _install_loader(self, kind: str) -> None:
         if self.current:
             self.app.install_loader(self.app.base_mc_version(self.current), kind)
 
-    def _uninstall_fabric(self) -> None:
+    def _uninstall_loader(self) -> None:
         if self.current:
-            self.app.detach_fabric(self.current)
+            self.app.detach_loader(self.current)
+
+    def _delete_version(self) -> None:
+        if self.current:
+            self.app.delete_version(self.current)
 
     def _refresh_running_state(self) -> None:
         running = bool(self.current and self.app.is_running(self.current))
-        self.stop_button.configure(state="normal" if running else "disabled")
+        self.start_button.configure(
+            state="disabled" if running else "normal",
+            text="● 正在运行" if running else "▶ 启动游戏",
+        )
 
     def on_show(self) -> None:
         self.refresh_dirs()
@@ -599,21 +629,6 @@ class AccountsPage(Page):
         ttk.Button(actions, text="删除选中账号", command=self.remove_selected).grid(
             row=2, column=0, sticky="ew", pady=(6, 0)
         )
-
-        ttk.Separator(actions).grid(row=3, column=0, sticky="ew", pady=12)
-        ttk.Label(
-            actions,
-            text=(
-                "微软账号：登录后可以联机、显示正版皮肤。\n"
-                "离线账号：只在本地用，名字和 UUID 自己定。\n\n"
-                "client id 是启动器自己的身份，\n"
-                "打包版已内置，你不需要申请。\n"
-                "（从源码运行才需要，见 msa-setup.md）"
-            ),
-            foreground="#666",
-            justify="left",
-            wraplength=210,
-        ).grid(row=4, column=0, sticky="w")
 
     # ------------------------------------------------------------------
 
@@ -737,18 +752,8 @@ class SettingsPage(Page):
         body.grid(row=0, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
 
-        game = ttk.LabelFrame(body, text="游戏目录", padding=10)
-        game.grid(row=0, column=0, sticky="ew")
-        game.columnconfigure(1, weight=1)
-        self.game_dir_var = tk.StringVar()
-        ttk.Entry(game, textvariable=self.game_dir_var, state="readonly").grid(
-            row=0, column=0, columnspan=3, sticky="ew"
-        )
-        ttk.Button(game, text="切换…", command=self.choose_game_dir).grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Button(game, text="打开", command=self.open_game_dir).grid(row=1, column=1, sticky="w", pady=(8, 0))
-
         general = ttk.LabelFrame(body, text="默认值（版本没单独设置时用）", padding=10)
-        general.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        general.grid(row=0, column=0, sticky="ew")
         general.columnconfigure(1, weight=1)
 
         ttk.Label(general, text="最大内存").grid(row=0, column=0, sticky="w", pady=3)
@@ -792,48 +797,38 @@ class SettingsPage(Page):
             state="readonly",
             values=list(self.source_labels),
         ).grid(row=5, column=1, sticky="ew", pady=3)
-        ttk.Label(
-            general,
-            text="自动 = 官方与镜像并行赛跑，谁快用谁；某个源在某台主机上失败会暂时跳过",
-            foreground="#666",
-            wraplength=520,
-        ).grid(row=6, column=0, columnspan=2, sticky="w")
 
         ttk.Label(general, text="微软 client id").grid(row=3, column=0, sticky="w", pady=3)
         self.client_id_var = tk.StringVar()
         ttk.Entry(general, textvariable=self.client_id_var).grid(
             row=3, column=1, sticky="ew", pady=3
         )
-        ttk.Label(
-            general,
-            text=(
-                "client id 是启动器自己的身份，正常打包版已内置，留空即可；\n"
-                "只有从源码运行、没内置时才需要填，步骤见 msa-setup.md"
-            ),
-            foreground="#666",
-            wraplength=520,
-        ).grid(row=4, column=0, columnspan=2, sticky="w")
-
-        ttk.Button(body, text="保存设置", command=self.save).grid(row=2, column=0, sticky="ew", pady=(10, 0))
 
         env = ttk.LabelFrame(body, text="环境", padding=10)
-        env.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        env.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         env.columnconfigure(1, weight=1)
         self.env_var = tk.StringVar(value="")
         ttk.Label(env, textvariable=self.env_var, wraplength=760).grid(row=0, column=0, sticky="w")
-        ttk.Button(env, text="检测本机 Java", command=self.detect_java).grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.java_list_var = tk.StringVar(value="")
         ttk.Label(env, textvariable=self.java_list_var, foreground="#666", wraplength=760).grid(
-            row=2, column=0, sticky="w", pady=(6, 0)
+            row=1, column=0, sticky="w", pady=(6, 0)
         )
 
         ttk.Label(body, text=f"Ge 启动器 {__version__}", foreground="#666").grid(
-            row=4, column=0, sticky="w", pady=(14, 0)
+            row=3, column=0, sticky="w", pady=(14, 0)
         )
+
+        # 即时保存：改任何一项都自动落盘
+        self._loading = False
+        self._save_job = None
+        for variable in (self.memory_var, self.java_var, self.client_id_var):
+            variable.trace_add("write", lambda *_: self._schedule_save())
+        self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
+        self.source_var.trace_add("write", lambda *_: self._schedule_save())
 
     def on_show(self) -> None:
         config = self.app.config
-        self.game_dir_var.set(str(self.app.layout.root))
+        self._loading = True
         self.memory_var.set(str(config.max_memory_mb))
         self.java_var.set(config.java_path)
         self.log_window_var.set(bool(config.show_log_window))
@@ -843,21 +838,10 @@ class SettingsPage(Page):
             next(iter(self.source_labels)),
         )
         self.source_var.set(label)
+        self._loading = False
         self.refresh_java_choices()
         env = current_env()
         self.env_var.set(f"系统：{env.os_name} / {env.arch}   游戏目录：{self.app.layout.root}")
-
-    def choose_game_dir(self) -> None:
-        chosen = filedialog.askdirectory(initialdir=str(self.app.layout.root), title="选 .minecraft 目录")
-        if not chosen:
-            return
-        self.app.change_game_dir(chosen)
-
-    def open_game_dir(self) -> None:
-        import os
-
-        if self.app.layout.root.is_dir():
-            os.startfile(str(self.app.layout.root))  # noqa: S606
 
     def browse_java(self) -> None:
         path = filedialog.askopenfilename(
@@ -880,16 +864,29 @@ class SettingsPage(Page):
                 "；".join(f"Java {major}（{path}）" for major, path in runtimes)
             )
 
-    def save(self) -> None:
-        config = self.app.config
-        try:
-            config.max_memory_mb = int(self.memory_var.get())
-        except ValueError:
-            messagebox.showerror("内存填错了", "最大内存要填整数（MB）")
+    def _schedule_save(self) -> None:
+        if getattr(self, "_loading", False):
             return
-        config.java_path = self.java_var.get().strip()
+        if self._save_job is not None:
+            try:
+                self.after_cancel(self._save_job)
+            except tk.TclError:
+                pass
+        self._save_job = self.after(400, self.save)
+
+    def save(self) -> None:
+        """全局默认值：改了立刻存，没有保存按钮。"""
+        self._save_job = None
+        config = self.app.config
+        text = self.memory_var.get().strip()
+        if text:
+            try:
+                config.max_memory_mb = int(text)
+            except ValueError:
+                return  # 正在输入，先别存
+        if self.java_var.get().strip() or config.java_path:
+            config.java_path = self.java_var.get().strip()
         config.show_log_window = bool(self.log_window_var.get())
         config.msa_client_id = self.client_id_var.get().strip()
         config.download_source = self.source_labels.get(self.source_var.get(), "auto")
         config.save()
-        self.app.set_status("设置已保存")
