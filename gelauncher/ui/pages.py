@@ -1088,11 +1088,36 @@ class SettingsPage(Page):
 
         env.body.bind("<Configure>", _refit_env, add="+")
 
+        about = Card(body, "关于")
+        about.grid(row=3, column=0, sticky="ew", pady=(10, 0))
+        about_form = about.body
+        about_form.columnconfigure(1, weight=1)
+        label(about_form, "启动器版本").grid(row=0, column=0, sticky="w", pady=4)
+        ctk.CTkLabel(
+            about_form,
+            text=f"Ge 启动器 {__version__}",
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12, weight="bold"),
+        ).grid(row=0, column=1, sticky="w", pady=4)
+
+        label(about_form, "GitHub 仓库").grid(row=1, column=0, sticky="w", pady=4)
         label(
-            body,
-            f"Ge 启动器 {__version__}",
+            about_form,
             muted=True,
-        ).grid(row=3, column=0, sticky="w", pady=(14, 0))
+            text="https://github.com/StudentBuilding-Studio/GeLauncher",
+        ).grid(row=1, column=1, sticky="w", pady=4)
+
+        ctk.CTkButton(
+            about_form,
+            text="打开 GitHub 仓库",
+            width=170,
+            height=34,
+            corner_radius=8,
+            fg_color=theme.ACCENT,
+            hover_color=theme.ACCENT_HOVER,
+            text_color="#ffffff",
+            command=self._open_repo,
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
         # 即时保存：改任何一项都自动落盘
         self._loading = False
@@ -1176,6 +1201,15 @@ class SettingsPage(Page):
             self.appearance_var.get(), config.appearance
         )
         config.save()
+
+    def _open_repo(self) -> None:
+        import webbrowser
+
+        url = "https://github.com/StudentBuilding-Studio/GeLauncher"
+        try:
+            webbrowser.open(url)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("打不开浏览器", f"{url}\n{exc}")
 
     def _apply_appearance(self, _value=None) -> None:
         from gelauncher.ui import theme
