@@ -55,6 +55,9 @@ class LauncherApp:
 
         self.status_var = tk.StringVar(value="就绪")
         self.root.report_callback_exception = self._on_callback_exception
+        from gelauncher.ui.dpi import apply_tk_scaling
+
+        self.scale = apply_tk_scaling(self.root)
 
         self._setup_fonts()
         self._setup_style()
@@ -976,6 +979,9 @@ class LauncherApp:
 
 
 def run_ui(config: Config | None = None) -> int:
+    from gelauncher.ui.dpi import enable_dpi_awareness
+
+    enable_dpi_awareness()
     config = config or Config.load()
     root = tk.Tk()
     app = LauncherApp(root, config)
