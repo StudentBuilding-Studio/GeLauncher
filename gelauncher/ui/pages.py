@@ -769,7 +769,9 @@ class AccountsPage(Page):
         self.rowconfigure(1, weight=1)
         self._entries: dict[str, dict] = {}
 
-        header = ctk.CTkFrame(self, fg_color="transparent")
+        from gelauncher.ui import theme
+
+        header = ctk.CTkFrame(self, fg_color=theme.BG)
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
         ctk.CTkLabel(
@@ -783,7 +785,7 @@ class AccountsPage(Page):
             row=0, column=1, sticky="e"
         )
 
-        body = ctk.CTkFrame(self, fg_color="transparent")
+        body = ctk.CTkFrame(self, fg_color=theme.BG)
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
         body.columnconfigure(1, weight=0, minsize=270)
@@ -945,7 +947,9 @@ class SettingsPage(Page):
         super().__init__(parent, app)
         self.columnconfigure(0, weight=1)
 
-        body = ctk.CTkFrame(self, fg_color="transparent")
+        from gelauncher.ui import theme
+
+        body = ctk.CTkFrame(self, fg_color=theme.BG)
         body.grid(row=0, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
 

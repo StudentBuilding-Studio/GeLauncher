@@ -64,13 +64,30 @@ def set_mode(mode: str) -> None:
     _current_mode = mode if mode in (MODE_SYSTEM, MODE_LIGHT, MODE_DARK) else MODE_SYSTEM
     if ctk is not None:
         ctk.set_appearance_mode(_current_mode)
+
+    def _refresh() -> None:
+        if _ttk_root is not None:
+            _apply_ttk_style()
+            try:
+                _ttk_root.update_idletasks()
+            except Exception:  # noqa: BLE001
+                pass
+        for callback in list(_listeners):
+            try:
+                callback()
+            except Exception:  # noqa: BLE001 - 单个界面出错不影响其它
+                pass
+
     if _ttk_root is not None:
-        _apply_ttk_style()
-    for callback in list(_listeners):
+        # CTk 的 get_appearance_mode() 在 set 之后要等它自己的回调跑完才准，
+        # 这里推到 idle 再刷，避免 ttk 用旧调色板把页面刷成深色。
         try:
-            callback()
-        except Exception:  # noqa: BLE001 - 单个界面出错不影响其它
+            _ttk_root.after_idle(_refresh)
+            _ttk_root.after(60, _refresh)
+            return
+        except Exception:  # noqa: BLE001
             pass
+    _refresh()
 
 
 def set_initial(mode: str) -> None:
