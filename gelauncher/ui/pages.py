@@ -417,8 +417,7 @@ class VersionsPage(Page):
         self._detail_nav_buttons: dict[str, ctk.CTkButton] = {}
         for index, (key, text) in enumerate(
             (
-                ("basic", "基本设置"),
-                ("game", "游戏设置"),
+                ("instance", "实例设置"),
                 ("install", "自动安装"),
                 ("browse", "浏览"),
                 ("manage", "管理"),
@@ -445,55 +444,16 @@ class VersionsPage(Page):
         content.columnconfigure(0, weight=1)
         content.rowconfigure(0, weight=1)
         self._detail_sections: dict[str, ctk.CTkScrollableFrame] = {}
-        for key in ("basic", "game", "install", "browse", "manage"):
+        for key in ("instance", "install", "browse", "manage"):
             section = ctk.CTkScrollableFrame(content, fg_color="transparent", corner_radius=0)
             section.grid(row=0, column=0, sticky="nsew")
             section.grid_remove()
             self._detail_sections[key] = section
 
-        # ---------------- 基本设置 ----------------
-        basic = self._detail_sections["basic"]
-        basic_card = Card(basic, "实例信息")
+        # ---------------- 实例设置：基本设置 ----------------
+        instance = self._detail_sections["instance"]
+        basic_card = Card(instance, "基本设置")
         basic_card.pack(fill="x", padx=4, pady=(0, 10))
-        self.info_vars = {
-            key: tk.StringVar(value="-")
-            for key in (
-                "mainClass",
-                "实例",
-                "版本",
-                "加载器",
-                "assets",
-                "库",
-                "隔离目录",
-            )
-        }
-        for text, key in (
-            ("实例名", "实例"),
-            ("游戏版本", "版本"),
-            ("加载器", "加载器"),
-            ("资源索引", "assets"),
-            ("库数量", "库"),
-            ("主类", "mainClass"),
-            ("游戏目录", "隔离目录"),
-        ):
-            self._section_row(
-                basic_card.body,
-                text,
-                control_factory=lambda row, key=key: ctk.CTkLabel(
-                    row,
-                    textvariable=self.info_vars[key],
-                    anchor="e",
-                    justify="right",
-                    wraplength=420,
-                    text_color=theme.MUTED,
-                    font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-                ),
-            )
-
-        # ---------------- 游戏设置 ----------------
-        game = self._detail_sections["game"]
-        game_card = Card(game, "游戏设置")
-        game_card.pack(fill="x", padx=4, pady=(0, 10))
 
         self.java_var = tk.StringVar()
 
@@ -515,10 +475,10 @@ class VersionsPage(Page):
             )
             return frame
 
-        self._section_row(game_card.body, "游戏 Java", "", _java_control)
+        self._section_row(basic_card.body, "游戏 Java", "", _java_control)
         self.java_hint_var = tk.StringVar(value="")
         self.java_hint_label = ctk.CTkLabel(
-            game_card.body,
+            basic_card.body,
             textvariable=self.java_hint_var,
             anchor="w",
             justify="left",
@@ -547,7 +507,7 @@ class VersionsPage(Page):
             ).pack(side="left", padx=(8, 0))
             return frame
 
-        self._section_row(game_card.body, "游戏内存", "按需分配，建议 4–8 GB", _memory_control)
+        self._section_row(basic_card.body, "游戏内存", "按需分配，建议 4–8 GB", _memory_control)
 
         self.width_var = tk.StringVar()
         self.height_var = tk.StringVar()
@@ -564,19 +524,87 @@ class VersionsPage(Page):
             ctk.CTkEntry(frame, textvariable=self.height_var, width=80).pack(side="left")
             return frame
 
-        self._section_row(game_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", _size_control)
+        self._section_row(basic_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", _size_control)
 
         self.log_window_var = tk.BooleanVar(value=True)
-
-        def _log_switch(row):
-            return ctk.CTkSwitch(row, text="", variable=self.log_window_var)
-
         self._section_row(
-            game_card.body,
+            basic_card.body,
             "启动时打开日志窗口",
             "每次启动都弹一个独立日志窗口，方便看崩溃信息",
-            _log_switch,
+            lambda row: ctk.CTkSwitch(row, text="", variable=self.log_window_var),
         )
+
+        # ---------------- 高级设置 ----------------
+        advanced_card = Card(instance, "高级设置")
+        advanced_card.pack(fill="x", padx=4, pady=(0, 10))
+        self.jvm_var = tk.StringVar()
+        self._section_row(
+            advanced_card.body,
+            "JVM 参数",
+            "追加到 java 命令里，例如 -XX:+UseG1GC -XX:MaxGCPauseMillis=50",
+            lambda row: ctk.CTkEntry(
+                row,
+                textvariable=self.jvm_var,
+                width=360,
+                placeholder_text="-XX:+UseG1GC …",
+                font=ctk.CTkFont(family="Consolas", size=12),
+            ),
+        )
+
+        from gelauncher.core.process_priority import PRIORITY_LABELS
+        from gelauncher.ui.widgets import Combo as _Combo
+
+        self.priority_labels = dict(PRIORITY_LABELS)
+        self.priority_var = tk.StringVar(value="正常")
+        self._section_row(
+            advanced_card.body,
+            "进程优先级",
+            "高优先级会让游戏更容易抢到 CPU，但可能拖慢系统其它程序",
+            lambda row: _Combo(
+                row,
+                variable=self.priority_var,
+                values=list(self.priority_labels),
+                width=160,
+            ),
+        )
+
+        # ---------------- 实例信息 ----------------
+        info_card = Card(instance, "实例信息")
+        info_card.pack(fill="x", padx=4, pady=(0, 10))
+        self.info_vars = {
+            key: tk.StringVar(value="-")
+            for key in (
+                "mainClass",
+                "实例",
+                "版本",
+                "加载器",
+                "assets",
+                "库",
+                "隔离目录",
+            )
+        }
+        for text, key in (
+            ("实例名", "实例"),
+            ("游戏版本", "版本"),
+            ("加载器", "加载器"),
+            ("资源索引", "assets"),
+            ("库数量", "库"),
+            ("主类", "mainClass"),
+            ("游戏目录", "隔离目录"),
+        ):
+            self._section_row(
+                info_card.body,
+                text,
+                control_factory=lambda row, key=key: ctk.CTkLabel(
+                    row,
+                    textvariable=self.info_vars[key],
+                    anchor="e",
+                    justify="right",
+                    wraplength=420,
+                    text_color=theme.MUTED,
+                    font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+                ),
+            )
 
         # ---------------- 自动安装 ----------------
         install = self._detail_sections["install"]
@@ -601,6 +629,7 @@ class VersionsPage(Page):
 
         repair_card = Card(install, "维护")
         repair_card.pack(fill="x", padx=4, pady=(0, 10))
+
         def _uninstall_control(row):
             self.uninstall_loader_button = button(
                 row, "卸载加载器", self._uninstall_loader, width=110
@@ -665,14 +694,21 @@ class VersionsPage(Page):
             ),
         )
 
-        self._show_detail_section("basic")
+        self._show_detail_section("instance")
 
         # 即时保存 + Java 提示
         self._loading = False
         self._save_job = None
-        for variable in (self.memory_var, self.java_var, self.width_var, self.height_var):
+        for variable in (
+            self.memory_var,
+            self.java_var,
+            self.width_var,
+            self.height_var,
+            self.jvm_var,
+        ):
             variable.trace_add("write", lambda *_: self._schedule_save())
         self.java_var.trace_add("write", lambda *_: self._update_java_hint())
+        self.priority_var.trace_add("write", lambda *_: self._schedule_save())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
 
     def _show_detail_section(self, name: str) -> None:
@@ -721,6 +757,13 @@ class VersionsPage(Page):
         self.width_var.set("" if settings.get("width") in (None, "") else str(settings["width"]))
         self.height_var.set("" if settings.get("height") in (None, "") else str(settings["height"]))
         self.log_window_var.set(bool(settings.get("show_log_window", True)))
+        self.jvm_var.set(str(settings.get("jvm_args") or ""))
+        priority_mode = str(settings.get("process_priority") or "normal")
+        priority_label = next(
+            (text for text, mode in self.priority_labels.items() if mode == priority_mode),
+            "正常",
+        )
+        self.priority_var.set(priority_label)
 
         self.title_var.set(version_id)
         base = self.app.base_mc_version(version_id)
@@ -799,6 +842,8 @@ class VersionsPage(Page):
             width=self._int_or_none(self.width_var.get()),
             height=self._int_or_none(self.height_var.get()),
             show_log_window=bool(self.log_window_var.get()),
+            jvm_args=self.jvm_var.get().strip(),
+            process_priority=self.priority_labels.get(self.priority_var.get(), "normal"),
         )
         self.app.config.save()
 
@@ -1315,6 +1360,60 @@ class SettingsPage(Page):
 
         self._row(general_card.body, "下载源", "自动 = 官方优先，慢/不通时切镜像", _source_control)
 
+        startup_card = Card(general, "默认启动参数")
+        startup_card.pack(fill="x", padx=4, pady=(0, 10))
+        self.default_width_var = tk.StringVar()
+        self.default_height_var = tk.StringVar()
+
+        def _size_control(row):
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            ctk.CTkEntry(frame, textvariable=self.default_width_var, width=80).pack(side="left")
+            ctk.CTkLabel(
+                frame,
+                text="×",
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ).pack(side="left", padx=6)
+            ctk.CTkEntry(frame, textvariable=self.default_height_var, width=80).pack(side="left")
+            return frame
+
+        self._row(startup_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", _size_control)
+
+        self.default_jvm_var = tk.StringVar()
+        self._row(
+            startup_card.body,
+            "JVM 参数",
+            "追加到 java 命令里，例如 -XX:+UseG1GC",
+            lambda row: ctk.CTkEntry(
+                row,
+                textvariable=self.default_jvm_var,
+                width=360,
+                font=ctk.CTkFont(family="Consolas", size=12),
+            ),
+        )
+
+        from gelauncher.core.process_priority import PRIORITY_LABELS
+
+        self.priority_labels = dict(PRIORITY_LABELS)
+        self.default_priority_var = tk.StringVar(value="正常")
+
+        def _priority_control(row):
+            from gelauncher.ui.widgets import Combo
+
+            return Combo(
+                row,
+                variable=self.default_priority_var,
+                values=list(self.priority_labels),
+                width=160,
+            )
+
+        self._row(
+            startup_card.body,
+            "进程优先级",
+            "实例没单独设置时用这个",
+            _priority_control,
+        )
+
         # 外观
         appearance = self._setting_sections["appearance"]
         appearance_card = Card(appearance, "主题")
@@ -1417,7 +1516,14 @@ class SettingsPage(Page):
         # 即时保存
         self._loading = False
         self._save_job = None
-        for variable in (self.memory_var, self.java_var):
+        for variable in (
+            self.memory_var,
+            self.java_var,
+            self.default_width_var,
+            self.default_height_var,
+            self.default_jvm_var,
+            self.default_priority_var,
+        ):
             variable.trace_add("write", lambda *_: self._schedule_save())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
         self.source_var.trace_add("write", lambda *_: self._schedule_save())
@@ -1461,6 +1567,18 @@ class SettingsPage(Page):
             next(iter(self.appearance_labels)),
         )
         self.appearance_var.set(appearance)
+        self.default_width_var.set("" if config.width in (None, "") else str(config.width))
+        self.default_height_var.set("" if config.height in (None, "") else str(config.height))
+        self.default_jvm_var.set(config.jvm_args or "")
+        priority_label = next(
+            (
+                text
+                for text, mode in self.priority_labels.items()
+                if mode == (config.process_priority or "normal")
+            ),
+            "正常",
+        )
+        self.default_priority_var.set(priority_label)
         self._loading = False
         self.refresh_java_choices()
         env = current_env()
@@ -1530,5 +1648,19 @@ class SettingsPage(Page):
         config.download_source = self.source_labels.get(self.source_var.get(), "auto")
         config.appearance = self.appearance_labels.get(
             self.appearance_var.get(), config.appearance
+        )
+        try:
+            width = int(self.default_width_var.get().strip())
+            config.width = width if width > 0 else None
+        except ValueError:
+            config.width = None
+        try:
+            height = int(self.default_height_var.get().strip())
+            config.height = height if height > 0 else None
+        except ValueError:
+            config.height = None
+        config.jvm_args = self.default_jvm_var.get().strip()
+        config.process_priority = self.priority_labels.get(
+            self.default_priority_var.get(), "normal"
         )
         config.save()

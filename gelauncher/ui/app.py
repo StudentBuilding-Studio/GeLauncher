@@ -518,6 +518,7 @@ class LauncherApp:
                 max_memory_mb=int(settings["max_memory_mb"]),
                 width=settings.get("width"),
                 height=settings.get("height"),
+                extra_jvm_args=self._split_jvm_args(settings),
             )
 
         key = self.instance_key(version_id)
@@ -538,6 +539,12 @@ class LauncherApp:
                     wait=False,
                 )
                 self.processes[key] = process
+                priority = str(settings.get("process_priority") or "normal")
+                if priority != "normal":
+                    from gelauncher.core.process_priority import apply_priority
+
+                    apply_priority(process.pid, priority)
+                    self.messages.put(("log", key, f"[LAUNCHER] 进程优先级：{priority}"))
                 self.messages.put(("status", f"{version_id} 运行中（Java {plan.java.major}）"))
                 self.messages.put(("running", key))
                 if window is not None:
@@ -577,6 +584,18 @@ class LauncherApp:
         """实例对应的真实游戏版本（实例名可以和版本号不同）。"""
         return self.layout.actual_version(version_id)
 
+    def _split_jvm_args(self, settings: dict) -> tuple[str, ...]:
+        """把实例设置里的 JVM 参数字符串拆成 argv（引号不配对时按空格兜底）。"""
+        import shlex
+
+        text = str(settings.get("jvm_args") or "").strip()
+        if not text:
+            return ()
+        try:
+            return tuple(shlex.split(text))
+        except ValueError:
+            return tuple(text.split())
+
     def designated_account(self) -> Account:
         """本次启动用的账号（微软账号会自动刷新 token）。"""
         from gelauncher.core.accounts import resolve_account
@@ -595,6 +614,7 @@ class LauncherApp:
             account=account,
             java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
             max_memory_mb=int(settings["max_memory_mb"]),
+            extra_jvm_args=self._split_jvm_args(settings),
             dry_run=True,
         )
         try:

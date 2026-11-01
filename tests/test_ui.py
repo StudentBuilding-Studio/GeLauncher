@@ -749,3 +749,25 @@ def test_memory_step_buttons(app):
     versions.memory_var.set("32768")
     versions._step_memory(512)
     assert versions.memory_var.get() == "32768"
+
+def test_detail_priority_and_settings_defaults(app):
+    versions = app.pages["versions"]
+    versions.open("1.21.8")
+    versions.priority_var.set("高")
+    versions.jvm_var.set("-XX:+UseG1GC")
+    versions._save_now()
+    stored = app.config.instance("1.21.8", root=app.layout.root)
+    assert stored["process_priority"] == "high"
+    assert stored["jvm_args"] == "-XX:+UseG1GC"
+
+    app.show_page("settings")
+    settings = app.pages["settings"]
+    settings.default_width_var.set("1280")
+    settings.default_height_var.set("720")
+    settings.default_jvm_var.set("-Xms1G")
+    settings.default_priority_var.set("高于正常")
+    settings.save()
+    assert app.config.width == 1280
+    assert app.config.height == 720
+    assert app.config.jvm_args == "-Xms1G"
+    assert app.config.process_priority == "above"

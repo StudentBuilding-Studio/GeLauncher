@@ -107,3 +107,17 @@ def test_instance_settings_keyed_by_full_path(tmp_path):
     # 只有目录名相同、父目录不同，也必须区分
     cfg.update_instance("1.21.8", root=tmp_path / "one" / "mc", max_memory_mb=8192)
     assert cfg.instance("1.21.8", root=tmp_path / "two" / "mc")["max_memory_mb"] == cfg.max_memory_mb
+
+def test_instance_falls_back_to_global_defaults(tmp_path):
+    from gelauncher.config import Config
+
+    cfg = Config(game_dir=str(tmp_path / "mc"))
+    cfg.width = 1280
+    cfg.height = 720
+    cfg.jvm_args = "-Xms1G"
+    cfg.process_priority = "above"
+    settings = cfg.instance("whatever", root=tmp_path / "mc")
+    assert settings["width"] == 1280
+    assert settings["height"] == 720
+    assert settings["jvm_args"] == "-Xms1G"
+    assert settings["process_priority"] == "above"

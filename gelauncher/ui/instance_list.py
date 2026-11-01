@@ -186,41 +186,56 @@ class InstanceList(tk.Frame):
         self._last_width = event.width
         self._schedule_redraw()
 
+    def _paint_row(self, index: int, iid: str, data: dict, width: int) -> None:
+        canvas = self._body
+        y = index * self.row_height
+        bg = theme.color(theme.ROW_BG if index % 2 == 0 else theme.ROW_ALT)
+        if iid == self._selected:
+            bg = theme.color(theme.ROW_SELECTED)
+        elif iid == self._hover:
+            bg = theme.color(theme.ROW_HOVER)
+        tag = f"row:{iid}"
+        canvas.create_rectangle(
+            4,
+            y + 2,
+            width - 4,
+            y + self.row_height - 2,
+            fill=bg,
+            outline=theme.border(),
+            tags=("row", tag),
+        )
+        self._draw_row_text(data, 14, y, width, tag)
+
+    def _refresh_row(self, iid: str) -> None:
+        """只重画一行（hover/选中变化时用，避免几百行全量重绘）。"""
+        canvas = self._body
+        if iid not in self._items:
+            return
+        try:
+            canvas.delete(f"row:{iid}")
+        except tk.TclError:
+            return
+        index = list(self._items).index(iid)
+        width = max(canvas.winfo_width(), 10)
+        self._paint_row(index, iid, self._items[iid], width)
+
     def _redraw(self) -> None:
         self._redraw_job = None
         canvas = self._body
         width = max(canvas.winfo_width(), 10)
-        signature = (
-            width,
-            len(self._items),
-            self._selected,
-            self._hover,
-            theme.dark(),
-        )
+        signature = (width, len(self._items), theme.dark())
         if signature == getattr(self, "_last_signature", None):
+            # 只有选中/悬停变了：只重画受影响的行
+            for iid in {self._selected, self._hover}:
+                if iid:
+                    self._refresh_row(iid)
             return
         self._last_signature = signature
         canvas.delete("row")
-        y = 0
         for index, (iid, data) in enumerate(self._items.items()):
-            bg = theme.color(theme.ROW_BG if index % 2 == 0 else theme.ROW_ALT)
-            if iid == self._selected:
-                bg = theme.color(theme.ROW_SELECTED)
-            elif iid == self._hover:
-                bg = theme.color(theme.ROW_HOVER)
-            canvas.create_rectangle(
-                4,
-                y + 2,
-                width - 4,
-                y + self.row_height - 2,
-                fill=bg,
-                outline=theme.border(),
-                tags=("row",),
-            )
-            self._draw_row_text(data, 14, y, width)
-            y += self.row_height
+            self._paint_row(index, iid, data, width)
         visible = max(canvas.winfo_height(), self.row_height)
-        canvas.configure(scrollregion=(0, 0, width, max(y, visible)))
+        canvas.configure(scrollregion=(0, 0, width, max(len(self._items) * self.row_height, visible)))
         self._draw_header(width)
 
     def _column_layout(self, width: int, slots: int) -> list[tuple[int, int]]:
@@ -259,7 +274,7 @@ class InstanceList(tk.Frame):
             text = text[:-1] + "…"
         return text
 
-    def _draw_row_text(self, data: dict, x: int, y: int, width: int) -> None:
+    def _draw_row_text(self, data: dict, x: int, y: int, width: int, tag: str = "row") -> None:
         canvas = self._body
         middle = y + self.row_height // 2
         values = data["values"]
@@ -273,7 +288,7 @@ class InstanceList(tk.Frame):
             anchor="w",
             fill=theme.text_color(),
             font=self._font_name,
-            tags=("row",),
+            tags=("row", tag),
         )
         for index, value in enumerate(values[:slots]):
             center, slot_width = layout[index]
@@ -284,7 +299,7 @@ class InstanceList(tk.Frame):
                 anchor="center",
                 fill=theme.muted(),
                 font=self._font_value,
-                tags=("row",),
+                tags=("row", tag),
             )
 
     def _draw_header(self, width: int | None = None) -> None:
@@ -347,8 +362,11 @@ class InstanceList(tk.Frame):
     def _set_hover(self, iid: str | None) -> None:
         if iid == self._hover:
             return
+        previous = self._hover
         self._hover = iid
-        self._schedule_redraw()
+        for target in (previous, iid):
+            if target:
+                self._refresh_row(target)
 
     def _scroll_rows(self, rows: int) -> None:
         self._body.yview_scroll(rows * self.row_height, "units")
@@ -361,8 +379,11 @@ class InstanceList(tk.Frame):
         self._scroll_rows(notches * 3)
 
     def _apply_selection(self, iid: str) -> None:
+        previous = self._selected
         self._selected = iid
-        self._schedule_redraw()
+        for target in (previous, iid):
+            if target:
+                self._refresh_row(target)
         for callback in list(self._select_callbacks):
             try:
                 callback(None)

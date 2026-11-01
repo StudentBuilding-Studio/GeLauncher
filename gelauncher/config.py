@@ -34,6 +34,10 @@ DEFAULT_INSTANCE = {
     "show_log_window": None,  # None = 用全局默认
     "width": None,
     "height": None,
+    #: 追加的 JVM 参数（空格分隔，如 "-XX:+UseG1GC -XX:MaxGCPauseMillis=50"）
+    "jvm_args": "",
+    #: 进程优先级："idle"/"below"/"normal"/"above"/"high"；None = 用全局默认
+    "process_priority": None,
 }
 
 
@@ -76,6 +80,10 @@ class Config:
     curse_api_key: str = ""
     #: 主窗口最后的位置/尺寸（"1040x680+100+50"）
     window_geometry: str = ""
+    #: 默认 JVM 参数（实例没写就用这个）
+    jvm_args: str = ""
+    #: 默认进程优先级（实例没写就用这个）
+    process_priority: str = "normal"
     #: 外观："system" 跟随系统 / "light" 浅色 / "dark" 深色
     appearance: str = "system"
 
@@ -374,6 +382,14 @@ class Config:
             merged["show_log_window"] = self.show_log_window
         if not merged["java_path"]:
             merged["java_path"] = self.java_path
+        if merged["width"] in (None, ""):
+            merged["width"] = self.width
+        if merged["height"] in (None, ""):
+            merged["height"] = self.height
+        if not merged["jvm_args"]:
+            merged["jvm_args"] = self.jvm_args
+        if merged["process_priority"] in (None, ""):
+            merged["process_priority"] = self.process_priority or "normal"
         return merged
 
     def update_instance(
