@@ -86,7 +86,7 @@ def button(master, text: str, command, *, accent: bool = False, danger: bool = F
         kwargs.setdefault("hover_color", theme.ACCENT_HOVER)
         kwargs.setdefault("text_color", "#ffffff")
     else:
-        kwargs.setdefault("fg_color", "#f3f4f6")
-        kwargs.setdefault("hover_color", "#e5e7eb")
+        kwargs.setdefault("fg_color", ("#f3f4f6", "#2b2f36"))
+        kwargs.setdefault("hover_color", ("#e5e7eb", "#363b43"))
         kwargs.setdefault("text_color", theme.TEXT)
     return ctk.CTkButton(master, text=text, command=command, **kwargs)

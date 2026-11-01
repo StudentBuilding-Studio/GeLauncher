@@ -75,7 +75,11 @@ class InstanceList(tk.Frame):
         )
         self._body.grid(row=1, column=0, sticky="nsew")
 
-        self._scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._body.yview)
+        import customtkinter as ctk
+
+        self._scrollbar = ctk.CTkScrollbar(
+            self, orientation="vertical", command=self._body.yview
+        )
         self._scrollbar.grid(row=1, column=1, sticky="ns")
         self._body.configure(yscrollcommand=self._scrollbar.set)
 
@@ -209,7 +213,8 @@ class InstanceList(tk.Frame):
             )
             self._draw_row_text(data, 14, y, width)
             y += self.row_height
-        canvas.configure(scrollregion=(0, 0, width, max(y, self.row_height)))
+        visible = max(canvas.winfo_height(), self.row_height)
+        canvas.configure(scrollregion=(0, 0, width, max(y, visible)))
         self._draw_header(width)
 
     def _column_layout(self, width: int, slots: int) -> list[tuple[int, int]]:
