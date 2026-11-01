@@ -207,49 +207,64 @@ class InstanceList(tk.Frame):
         canvas.configure(scrollregion=(0, 0, width, max(y, self.row_height)))
         self._draw_header(width)
 
-    def _value_centers(self, width: int, slots: int) -> list[int]:
-        widths = list(self.column_widths[1:])[:slots]
-        if widths:
-            available = max(width - 60, 120)
-            total = sum(widths)
-            if total > available * 0.7:
-                factor = (available * 0.7) / total
-                widths = [max(64, int(item * factor)) for item in widths]
-        centers: list[int] = []
+    def _column_layout(self, width: int, slots: int) -> list[tuple[int, int]]:
+        """返回每个值列的 (中心 x, 列宽)：按内容需要 + 可用空间自适应。"""
+        if slots <= 0:
+            return []
+        base = list(self.column_widths[1:])[:slots]
+        needed = []
+        for index in range(slots):
+            longest = 0
+            for data in self._items.values():
+                values = data["values"]
+                if index < len(values):
+                    longest = max(longest, self._font_value.measure(str(values[index])))
+            needed.append(longest + 28)
+        widths = [max(b, n) for b, n in zip(base, needed)]
+        available = max(width - 150, 120)  # 左边给名字留位置
+        total = sum(widths)
+        if total > available:
+            factor = available / total
+            widths = [max(52, int(item * factor)) for item in widths]
+        layout: list[tuple[int, int]] = []
         right = width - 10
         for slot_width in reversed(widths):
             right -= slot_width // 2
-            centers.append(right)
+            layout.append((right, slot_width))
             right -= slot_width // 2
-        centers.reverse()
-        return centers
+        layout.reverse()
+        return layout
+
+    def _fit_text(self, text: str, font, limit: int) -> str:
+        original = text
+        while text and font.measure(text) > limit:
+            text = text[:-1]
+        if text != original:
+            text = text[:-1] + "…"
+        return text
 
     def _draw_row_text(self, data: dict, x: int, y: int, width: int) -> None:
         canvas = self._body
         middle = y + self.row_height // 2
         values = data["values"]
         slots = max(len(self.column_widths) - 1, 0)
-        centers = self._value_centers(width, slots)
-        name_limit = max(centers[0] - 24, 60) if centers else width - 20
-        title = str(data["text"])
-        while title and self._font_name.measure(title) > name_limit:
-            title = title[:-1]
-        if title != str(data["text"]):
-            title = title[:-1] + "…"
+        layout = self._column_layout(width, slots)
+        name_limit = (layout[0][0] - layout[0][1] // 2 - 20) if layout else width - 20
         canvas.create_text(
             x,
             middle,
-            text=title,
+            text=self._fit_text(str(data["text"]), self._font_name, max(name_limit, 40)),
             anchor="w",
             fill=ROW_TEXT,
             font=self._font_name,
             tags=("row",),
         )
         for index, value in enumerate(values[:slots]):
+            center, slot_width = layout[index]
             canvas.create_text(
-                centers[index],
+                center,
                 middle,
-                text=str(value),
+                text=self._fit_text(str(value), self._font_value, max(slot_width - 10, 30)),
                 anchor="center",
                 fill=MUTED,
                 font=self._font_value,
@@ -273,12 +288,13 @@ class InstanceList(tk.Frame):
             font=self._font_header,
         )
         slots = max(len(self.column_widths) - 1, 0)
+        layout = self._column_layout(width, slots)
         for index, title in enumerate(self.headers[1 : slots + 1]):
-            centers = self._value_centers(width, slots)
+            center, slot_width = layout[index]
             canvas.create_text(
-                centers[index],
+                center,
                 middle,
-                text=title,
+                text=self._fit_text(title, self._font_header, max(slot_width - 8, 30)),
                 anchor="center",
                 fill=MUTED,
                 font=self._font_header,
