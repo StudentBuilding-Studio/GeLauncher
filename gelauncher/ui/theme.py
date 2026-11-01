@@ -226,6 +226,35 @@ def _apply_ttk_style() -> None:
     style.configure("TLabelframe", background=background, bordercolor=border_color)
     style.configure("TLabelframe.Label", background=background, foreground=muted_color)
     style.configure("TButton", padding=(12, 6))
+    # clam 的下拉/数值框箭头默认用深色，深色主题下几乎看不见
+    style.configure(
+        "TCombobox",
+        fieldbackground=card_bg,
+        background=card_bg,
+        foreground=foreground,
+        arrowcolor=foreground,
+        arrowsize=12,
+    )
+    style.map(
+        "TCombobox",
+        fieldbackground=[("readonly", card_bg)],
+        foreground=[("readonly", foreground)],
+        arrowcolor=[("active", ACCENT), ("pressed", ACCENT)],
+    )
+    style.configure(
+        "TSpinbox",
+        fieldbackground=card_bg,
+        background=card_bg,
+        foreground=foreground,
+        arrowcolor=foreground,
+        arrowsize=12,
+    )
+    style.map(
+        "TSpinbox",
+        fieldbackground=[("readonly", card_bg)],
+        foreground=[("readonly", foreground)],
+        arrowcolor=[("active", ACCENT), ("pressed", ACCENT)],
+    )
     style.configure(
         "Treeview", background=card_bg, fieldbackground=card_bg, rowheight=int(linespace * 1.6)
     )

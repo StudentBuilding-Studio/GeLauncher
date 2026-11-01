@@ -9,7 +9,7 @@ from __future__ import annotations
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
@@ -98,9 +98,9 @@ class LogWindow(ctk.CTkToplevel):
         for tag, color in LEVEL_TAGS.items():
             self.text.tag_configure(tag, foreground=color)
 
-        yscroll = ttk.Scrollbar(frame, orient="vertical", command=self.text.yview)
+        yscroll = ctk.CTkScrollbar(frame, orientation="vertical", command=self.text.yview)
         yscroll.grid(row=0, column=1, sticky="ns")
-        xscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.text.xview)
+        xscroll = ctk.CTkScrollbar(frame, orientation="horizontal", command=self.text.xview)
         xscroll.grid(row=1, column=0, sticky="ew")
         self.text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
 

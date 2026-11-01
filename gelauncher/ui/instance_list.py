@@ -163,8 +163,6 @@ class InstanceList(tk.Frame):
             "text": text,
             "values": list(values) if values else [],
         }
-        if self._selected is None:
-            self._selected = iid
         self._schedule_redraw()
 
     def delete(self, *iids: str) -> None:
