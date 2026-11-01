@@ -13,6 +13,8 @@
 - **安装原版**：官方 version_manifest → 版本 JSON → 库 / assets / 客户端 jar，全程 sha1 校验，多源自动切换
 - **安装加载器**（Fabric / Forge / NeoForge，全部装进现有实例，和 HMCL 的 patch 一样）：
   - 点「装 Fabric / Forge / NeoForge」会先弹出该实例可用的加载器版本列表，选版本再装
+  - Forge / NeoForge 走 processors 流程（移植 HMCL 的 ForgeNewInstallTask），
+    不依赖 installer 的 `--installClient`，所以老的 Forge / NeoForge 1.20.1 也能装
   - 实例名不变，启动它就是对应加载器
   - 原版 JSON 备份成 `<id>.json.vanilla-backup`，随时可以「卸载加载器」还原
   - 一个版本同时只能装一个加载器；装第二个会提示先卸载

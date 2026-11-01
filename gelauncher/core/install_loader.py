@@ -25,6 +25,7 @@ from . import libraries
 from .java import JavaRuntime, find_java
 from .layout import GameLayout
 from .models import VersionJson, VersionJsonError
+from .forge_processors import ProcessorError
 from .net import DEFAULT_SOURCES, DownloadJob, DownloadReport, Fetcher, Source
 from .rules import Environment, allow
 
@@ -798,6 +799,53 @@ def seed_install_profile_libraries(
     return report.downloaded + report.skipped, report.failures
 
 
+def _has_processors(installer_path: Path) -> bool:
+    """installer 里有没有 processors 流程（有就能绕开 installer 命令行）。"""
+    try:
+        from .forge_processors import read_profile
+
+        return bool(read_profile(installer_path).processors)
+    except Exception:  # noqa: BLE001 - 读不了就当没有，退回命令行方式
+        return False
+
+
+def _attach_via_processors(
+    layout: GameLayout,
+    instance: str,
+    actual: str,
+    installer_path: Path,
+    *,
+    loader: str,
+    fetcher: Fetcher,
+    java: JavaRuntime | None,
+    progress: ProgressHook | None = None,
+) -> None:
+    """跑 processors，把产出的版本 JSON 合并进实例，并下载加载器库。"""
+    from .forge_processors import ProcessorError, install_with_processors
+
+    runtime = java or find_java(None)
+    patch = install_with_processors(
+        layout,
+        instance,
+        actual,
+        installer_path,
+        fetcher=fetcher,
+        java=runtime.path,
+        progress=progress,
+    )
+    raw = _merge_loader_json(layout, instance, patch, loader=loader)
+
+    merged = VersionJson.from_dict(raw, f"merged({instance})")
+    jobs = _library_jobs(layout, merged, Environment())
+    _notify(progress, "libraries", f"下载 {len(jobs)} 个加载器库…")
+    report = fetcher.download_all(jobs)
+    if not report.ok:
+        raise LoaderInstallError(
+            "加载器库下载失败：\n"
+            + "\n".join(f"  - {name}：{reason}" for name, reason in report.failures[:10])
+        )
+
+
 def install_forge(
     layout: GameLayout,
     instance: str,
@@ -831,10 +879,36 @@ def install_forge(
     _notify(progress, "download", f"下载 {installer_name}…")
     _download_installer(
         fetcher,
-        [f"{FORGE_MAVEN}/net/minecraftforge/forge/{coordinate}/{installer_name}"],
+        [
+            f"{FORGE_MAVEN}/net/minecraftforge/forge/{coordinate}/{installer_name}",
+            f"{BMCLAPI_ROOT}/maven/net/minecraftforge/forge/{coordinate}/{installer_name}",
+        ],
         installer_path,
         installer_name,
     )
+
+    # 有 processors 就走 HMCL 那套流程（顺便规避老 installer 没有 --installClient 的问题）
+    if _has_processors(installer_path):
+        _notify(progress, "processors", "用 processors 方式安装（不依赖 installer 命令行）…")
+        try:
+            _attach_via_processors(
+                layout,
+                instance,
+                actual,
+                installer_path,
+                loader="forge",
+                fetcher=fetcher,
+                java=java,
+                progress=progress,
+            )
+        except ProcessorError as exc:
+            raise LoaderInstallError(f"Forge 安装失败：{exc}") from exc
+        if loader_of(layout, instance) != "forge":
+            raise LoaderInstallError("Forge 合并进实例失败")
+        _notify(progress, "done", f"{instance} 已装上 Forge（{coordinate}）")
+        return LoaderReport(
+            version_id=instance, loader="forge", installer_path=installer_path
+        )
 
     created_shim = _ensure_vanilla_shim(layout, instance, actual)
 
@@ -925,6 +999,28 @@ def install_neoforge(
         installer_path,
         installer_name,
     )
+
+    if _has_processors(installer_path):
+        _notify(progress, "processors", "用 processors 方式安装（不依赖 installer 命令行）…")
+        try:
+            _attach_via_processors(
+                layout,
+                instance,
+                actual,
+                installer_path,
+                loader="neoforge",
+                fetcher=fetcher,
+                java=java,
+                progress=progress,
+            )
+        except ProcessorError as exc:
+            raise LoaderInstallError(f"NeoForge 安装失败：{exc}") from exc
+        if loader_of(layout, instance) != "neoforge":
+            raise LoaderInstallError("NeoForge 合并进实例失败")
+        _notify(progress, "done", f"{instance} 已装上 NeoForge（{version}）")
+        return LoaderReport(
+            version_id=instance, loader="neoforge", installer_path=installer_path
+        )
 
     created_shim = _ensure_vanilla_shim(layout, instance, actual)
 
