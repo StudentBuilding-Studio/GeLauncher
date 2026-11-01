@@ -350,31 +350,9 @@ class VersionsPage(Page):
     # ---------------------------------------------------------------- 二级页
 
     def _section_row(self, parent, title: str, subtitle: str = "", control_factory=None):
-        """一行"标题 + 说明 + 右侧控件"，控件必须建在 row 里（pack 到自己的父容器会错位）。"""
-        row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=6)
-        text = ctk.CTkFrame(row, fg_color="transparent")
-        text.pack(side="left", fill="x", expand=True)
-        ctk.CTkLabel(
-            text,
-            text=title,
-            anchor="w",
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
-        ).pack(fill="x")
-        if subtitle:
-            ctk.CTkLabel(
-                text,
-                text=subtitle,
-                anchor="w",
-                justify="left",
-                wraplength=520,
-                text_color=theme.MUTED,
-                font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
-            ).pack(fill="x", pady=(2, 0))
-        if control_factory is not None:
-            control = control_factory(row)
-            control.pack(side="right", padx=(14, 0))
-        return row
+        from gelauncher.ui.widgets import settings_row
+
+        return settings_row(parent, title, subtitle, control_factory)
 
     def _build_detail(self) -> None:
         from gelauncher.ui.widgets import Card, Combo, button
@@ -1217,30 +1195,9 @@ class SettingsPage(Page):
     title = "设置"
 
     def _row(self, parent, title: str, subtitle: str = "", control_factory=None):
-        row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.pack(fill="x", padx=14, pady=6)
-        text = ctk.CTkFrame(row, fg_color="transparent")
-        text.pack(side="left", fill="x", expand=True)
-        ctk.CTkLabel(
-            text,
-            text=title,
-            anchor="w",
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
-        ).pack(fill="x")
-        if subtitle:
-            ctk.CTkLabel(
-                text,
-                text=subtitle,
-                anchor="w",
-                justify="left",
-                wraplength=520,
-                text_color=theme.MUTED,
-                font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
-            ).pack(fill="x", pady=(2, 0))
-        if control_factory is not None:
-            control = control_factory(row)
-            control.pack(side="right", padx=(14, 0))
-        return row
+        from gelauncher.ui.widgets import settings_row
+
+        return settings_row(parent, title, subtitle, control_factory)
 
     def _build_shell(self) -> None:
         from gelauncher.ui.widgets import Card
@@ -1300,8 +1257,16 @@ class SettingsPage(Page):
         self.memory_var = tk.StringVar()
 
         def _memory_control(row):
+            from gelauncher.ui.widgets import button
+
             frame = ctk.CTkFrame(row, fg_color="transparent")
             ctk.CTkEntry(frame, textvariable=self.memory_var, width=100).pack(side="left")
+            button(frame, "−", lambda: self._step_memory(-512), width=32, height=30).pack(
+                side="left", padx=(8, 0)
+            )
+            button(frame, "+", lambda: self._step_memory(512), width=32, height=30).pack(
+                side="left", padx=(4, 0)
+            )
             ctk.CTkLabel(
                 frame,
                 text="MB",
@@ -1319,7 +1284,7 @@ class SettingsPage(Page):
 
             frame = ctk.CTkFrame(row, fg_color="transparent")
             self.java_combo = Combo(
-                frame, variable=self.java_var, values=self.app.java_choices(), width=320
+                frame, variable=self.java_var, values=self.app.java_choices(), width=300
             )
             self.java_combo.pack(side="left")
             button(frame, "…", self.browse_java, width=38, height=30).pack(
@@ -1583,6 +1548,14 @@ class SettingsPage(Page):
         self.refresh_java_choices()
         env = current_env()
         self.env_var.set(f"系统：{env.os_name} / {env.arch}   游戏目录：{self.app.layout.root}")
+
+    def _step_memory(self, delta: int) -> None:
+        try:
+            current = int(self.memory_var.get().strip() or self.app.config.max_memory_mb)
+        except ValueError:
+            current = self.app.config.max_memory_mb
+        value = max(512, min(32768, current + delta))
+        self.memory_var.set(str(value))
 
     def browse_java(self) -> None:
         path = filedialog.askopenfilename(

@@ -110,3 +110,36 @@ def close_later(window, delay: int = 120) -> None:
             window.destroy()
         except Exception:  # noqa: BLE001
             pass
+
+
+def settings_row(parent, title: str, subtitle: str = "", control_factory=None, **kwargs):
+    """统一的设置行：左边标题/说明，右边控件。
+
+    实例设置和全局设置都走这个函数，保证两处排版、字号、间距完全一致。
+    """
+    import tkinter as tk
+
+    row = ctk.CTkFrame(parent, fg_color="transparent")
+    row.pack(fill="x", padx=14, pady=7)
+    text = ctk.CTkFrame(row, fg_color="transparent")
+    text.pack(side="left", fill="x", expand=True)
+    ctk.CTkLabel(
+        text,
+        text=title,
+        anchor="w",
+        font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
+    ).pack(fill="x")
+    if subtitle:
+        ctk.CTkLabel(
+            text,
+            text=subtitle,
+            anchor="w",
+            justify="left",
+            wraplength=520,
+            text_color=theme.MUTED,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
+        ).pack(fill="x", pady=(2, 0))
+    if control_factory is not None:
+        control = control_factory(row)
+        control.pack(side="right", padx=(14, 0))
+    return row
