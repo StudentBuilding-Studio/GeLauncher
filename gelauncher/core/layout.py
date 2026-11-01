@@ -119,8 +119,12 @@ class GameLayout:
     def actual_version(self, instance: str, _depth: int = 0) -> str:
         """实例对应的真实游戏版本。
 
-        新装的实例会把版本号写进 ``clientVersion``；老版本 / 别的启动器给的实例
-        没有这个字段，就顺着 ``inheritsFrom`` 找到最底下的原版。
+        依次尝试：
+        1. ``clientVersion``（本启动器新建的实例都写这个）
+        2. ``inheritsFrom`` 链
+        3. jar 内嵌的 ``version.json``（HMCL 等启动器合并出的实例没有前两者）
+        4. 加载器库版本反推（``net.minecraftforge:forge:1.16.5-36.x`` → 1.16.5）
+        5. 实例名
         """
         if _depth > 8:
             return instance
@@ -132,8 +136,60 @@ class GameLayout:
             return version.client_version
         if version.inherits_from:
             return self.actual_version(version.inherits_from, _depth + 1)
+        embedded = _jar_game_version(self.version_jar_path(instance))
+        if embedded:
+            return embedded
+        guessed = _loader_game_version(version)
+        if guessed:
+            return guessed
         return version.id or instance
 
 
 def current_env() -> Environment:
     return Environment(os_name=current_os(), arch=current_arch())
+
+
+_JAR_VERSION_CACHE: dict[tuple[str, int], str | None] = {}
+
+
+def _jar_game_version(jar_path: Path) -> str | None:
+    """从客户端 jar 里的 version.json 读真实版本号（带 mtime 缓存）。"""
+    try:
+        stat = jar_path.stat()
+    except OSError:
+        return None
+    key = (str(jar_path).lower(), stat.st_mtime_ns)
+    if key in _JAR_VERSION_CACHE:
+        return _JAR_VERSION_CACHE[key]
+    value: str | None = None
+    try:
+        import json
+        import zipfile
+
+        with zipfile.ZipFile(jar_path) as archive:
+            payload = json.loads(archive.read("version.json").decode("utf-8-sig"))
+        candidate = str(payload.get("id") or payload.get("name") or "").strip()
+        value = candidate or None
+    except Exception:  # noqa: BLE001 - jar 坏了/没有 version.json 就当没有
+        value = None
+    _JAR_VERSION_CACHE[key] = value
+    return value
+
+
+def _loader_game_version(version) -> str | None:
+    """从 loader 库版本反推游戏版本：forge 1.16.5-36.x / neoforge 21.1.x → 1.21.1。"""
+    import re
+
+    for library in getattr(version, "libraries", None) or []:
+        name = getattr(library, "name", "") or ""
+        if name.startswith("net.minecraftforge:forge:"):
+            tail = name.split(":", 3)[-1]
+            match = re.match(r"(\d+\.\d+(?:\.\d+)?)-", tail)
+            if match:
+                return match.group(1)
+        if name.startswith("net.neoforged:neoforge:"):
+            tail = name.split(":", 3)[-1]
+            match = re.match(r"(\d+)\.(\d+)\.", tail)
+            if match:
+                return f"1.{match.group(1)}.{match.group(2)}"
+    return None
