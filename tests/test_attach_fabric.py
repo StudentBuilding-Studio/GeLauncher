@@ -330,3 +330,46 @@ def test_vanilla_install_writes_client_version(tmp_path):
     assert data["clientVersion"] == "1.99.0"
     assert layout.version_jar_path("生存服").is_file()
     assert layout.actual_version("生存服") == "1.99.0"
+
+def test_processors_get_vanilla_shim(tmp_path, monkeypatch):
+    """实例名 ≠ 版本号时，processors 之前必须先建好以版本号命名的原版目录。"""
+    from gelauncher.core import install_loader
+    from gelauncher.core.layout import GameLayout
+
+    layout = GameLayout(tmp_path / ".minecraft")
+    data = json.loads((FIXTURES / "vanilla-1.21.8.json").read_text(encoding="utf-8"))
+    data["id"] = "生存服"
+    data["clientVersion"] = "1.21.8"
+    path = layout.version_json_path("生存服")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    layout.version_jar_path("生存服").write_bytes(b"jar")
+
+    seen = {}
+
+    def fake_attach(layout, instance, actual, installer, *, loader, fetcher, java, progress=None):
+        seen["shim_jar"] = layout.version_jar_path(actual).is_file()
+        seen["shim_json"] = layout.version_json_path(actual).is_file()
+        install_loader._merge_loader_json(
+            layout,
+            instance,
+            {"mainClass": "net.neoforged.fml.startup.Client", "libraries": [], "arguments": {}},
+            loader="neoforge",
+        )
+
+    fetcher = install_loader.Fetcher(sources=(), retries=1, cache_dir=tmp_path)
+
+    monkeypatch.setattr(install_loader, "_has_processors", lambda p: True)
+    monkeypatch.setattr(install_loader, "_attach_via_processors", fake_attach)
+    monkeypatch.setattr(
+        install_loader,
+        "_download_installer",
+        lambda fetcher, urls, destination, label: destination.write_bytes(b"jar"),
+    )
+    monkeypatch.setattr(install_loader, "find_java", lambda *a, **k: type("J", (), {"major": 21, "path": "java"})())
+
+    install_loader.install_neoforge(
+        layout, "生存服", neoforge_version="21.8.57", fetcher=fetcher
+    )
+    assert seen["shim_jar"] and seen["shim_json"], "processors 运行时应该有 shim"
+    assert not layout.version_dir("1.21.8").exists(), "装完要把临时 shim 删掉"

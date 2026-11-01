@@ -854,18 +854,6 @@ class SettingsPage(Page):
             values=list(self.source_labels),
         ).grid(row=5, column=1, sticky="ew", pady=3)
 
-        ttk.Label(general, text="CurseForge API key").grid(row=6, column=0, sticky="w", pady=3)
-        self.curse_id_var = tk.StringVar()
-        ttk.Entry(general, textvariable=self.curse_id_var).grid(
-            row=6, column=1, sticky="ew", pady=3
-        )
-
-        ttk.Label(general, text="微软 client id").grid(row=3, column=0, sticky="w", pady=3)
-        self.client_id_var = tk.StringVar()
-        ttk.Entry(general, textvariable=self.client_id_var).grid(
-            row=3, column=1, sticky="ew", pady=3
-        )
-
         env = ttk.LabelFrame(body, text="环境", padding=10)
         env.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         env.columnconfigure(1, weight=1)
@@ -883,7 +871,7 @@ class SettingsPage(Page):
         # 即时保存：改任何一项都自动落盘
         self._loading = False
         self._save_job = None
-        for variable in (self.memory_var, self.java_var, self.client_id_var, self.curse_id_var):
+        for variable in (self.memory_var, self.java_var):
             variable.trace_add("write", lambda *_: self._schedule_save())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
         self.source_var.trace_add("write", lambda *_: self._schedule_save())
@@ -894,8 +882,6 @@ class SettingsPage(Page):
         self.memory_var.set(str(config.max_memory_mb))
         self.java_var.set(config.java_path)
         self.log_window_var.set(bool(config.show_log_window))
-        self.client_id_var.set(config.msa_client_id)
-        self.curse_id_var.set(config.curse_api_key)
         label = next(
             (text for text, mode in self.source_labels.items() if mode == config.download_source),
             next(iter(self.source_labels)),
@@ -950,7 +936,5 @@ class SettingsPage(Page):
         if self.java_var.get().strip() or config.java_path:
             config.java_path = self.java_var.get().strip()
         config.show_log_window = bool(self.log_window_var.get())
-        config.msa_client_id = self.client_id_var.get().strip()
-        config.curse_api_key = self.curse_id_var.get().strip()
         config.download_source = self.source_labels.get(self.source_var.get(), "auto")
         config.save()

@@ -365,7 +365,7 @@ class LauncherApp:
                     instance_name=instance,
                     info=info,
                     game_version=game_version,
-                    curse_api_key=self.config.curse_api_key or None,
+                    curse_api_key=modpack.effective_curse_api_key(self.config.curse_api_key),
                     fetcher=fetcher,
                     progress=progress,
                 )

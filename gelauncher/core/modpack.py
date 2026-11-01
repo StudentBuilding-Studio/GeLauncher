@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,17 @@ from .layout import GameLayout
 from .net import DownloadJob, DownloadReport, Fetcher
 
 ProgressHook = "Callable[[str, str], None]"
+
+#: 内置的 CurseForge API key（打包版直接用，源码运行可用环境变量覆盖）
+DEFAULT_CURSE_API_KEY = "2a$10$FAakVyxZ1Kr.HXQIJa78peti/XI7FhPw15EyBPJXosqnrD795BRse"
+CURSE_API_KEY_ENV = "GE_CURSE_API_KEY"
+
+
+def effective_curse_api_key(configured: str = "") -> str:
+    """配置 > 环境变量 > 内置 key。"""
+    if configured and configured.strip():
+        return configured.strip()
+    return (os.environ.get(CURSE_API_KEY_ENV) or DEFAULT_CURSE_API_KEY or "").strip()
 
 
 class ModpackError(RuntimeError):

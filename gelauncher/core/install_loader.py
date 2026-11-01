@@ -887,6 +887,9 @@ def install_forge(
         installer_name,
     )
 
+    # installer / processors 都要求有一个以真实版本号命名的原版目录
+    created_shim = _ensure_vanilla_shim(layout, instance, actual)
+
     # 有 processors 就走 HMCL 那套流程（顺便规避老 installer 没有 --installClient 的问题）
     if _has_processors(installer_path):
         _notify(progress, "processors", "用 processors 方式安装（不依赖 installer 命令行）…")
@@ -902,15 +905,17 @@ def install_forge(
                 progress=progress,
             )
         except ProcessorError as exc:
+            if created_shim:
+                _drop_vanilla_shim(layout, actual)
             raise LoaderInstallError(f"Forge 安装失败：{exc}") from exc
+        if created_shim:
+            _drop_vanilla_shim(layout, actual)
         if loader_of(layout, instance) != "forge":
             raise LoaderInstallError("Forge 合并进实例失败")
         _notify(progress, "done", f"{instance} 已装上 Forge（{coordinate}）")
         return LoaderReport(
             version_id=instance, loader="forge", installer_path=installer_path
         )
-
-    created_shim = _ensure_vanilla_shim(layout, instance, actual)
 
     seeded, failures = seed_install_profile_libraries(
         fetcher, layout, installer_path, progress=progress
@@ -1000,6 +1005,9 @@ def install_neoforge(
         installer_name,
     )
 
+    # installer / processors 都要求有一个以真实版本号命名的原版目录
+    created_shim = _ensure_vanilla_shim(layout, instance, actual)
+
     if _has_processors(installer_path):
         _notify(progress, "processors", "用 processors 方式安装（不依赖 installer 命令行）…")
         try:
@@ -1014,15 +1022,17 @@ def install_neoforge(
                 progress=progress,
             )
         except ProcessorError as exc:
+            if created_shim:
+                _drop_vanilla_shim(layout, actual)
             raise LoaderInstallError(f"NeoForge 安装失败：{exc}") from exc
+        if created_shim:
+            _drop_vanilla_shim(layout, actual)
         if loader_of(layout, instance) != "neoforge":
             raise LoaderInstallError("NeoForge 合并进实例失败")
         _notify(progress, "done", f"{instance} 已装上 NeoForge（{version}）")
         return LoaderReport(
             version_id=instance, loader="neoforge", installer_path=installer_path
         )
-
-    created_shim = _ensure_vanilla_shim(layout, instance, actual)
 
     java = java or find_java(None)
     # NeoForge installer 不认 --mirror，会直接连 maven.neoforged.net（实测超时），
