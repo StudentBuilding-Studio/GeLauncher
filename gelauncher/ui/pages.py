@@ -1252,8 +1252,29 @@ class SettingsPage(Page):
 
         # 常规
         general = self._setting_sections["general"]
-        general_card = Card(general, "默认值（版本没单独设置时用）")
-        general_card.pack(fill="x", padx=4, pady=(0, 10))
+        basic_card = Card(general, "基本设置（默认值）")
+        basic_card.pack(fill="x", padx=4, pady=(0, 10))
+
+        self.java_var = tk.StringVar()
+
+        def _java_control(row):
+            from gelauncher.ui.widgets import Combo, button
+
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            self.java_combo = Combo(
+                frame, variable=self.java_var, values=self.app.java_choices(), width=300
+            )
+            self.java_combo.pack(side="left")
+            button(frame, "…", self.browse_java, width=38, height=30).pack(
+                side="left", padx=(6, 0)
+            )
+            button(frame, "检测", self.detect_java, width=68, height=30).pack(
+                side="left", padx=(6, 0)
+            )
+            return frame
+
+        self._row(basic_card.body, "游戏 Java", "", _java_control)
+
         self.memory_var = tk.StringVar()
 
         def _memory_control(row):
@@ -1275,58 +1296,8 @@ class SettingsPage(Page):
             ).pack(side="left", padx=(8, 0))
             return frame
 
-        self._row(general_card.body, "最大内存", "", _memory_control)
+        self._row(basic_card.body, "游戏内存", "按需分配，建议 4–8 GB", _memory_control)
 
-        self.java_var = tk.StringVar()
-
-        def _java_control(row):
-            from gelauncher.ui.widgets import Combo, button
-
-            frame = ctk.CTkFrame(row, fg_color="transparent")
-            self.java_combo = Combo(
-                frame, variable=self.java_var, values=self.app.java_choices(), width=300
-            )
-            self.java_combo.pack(side="left")
-            button(frame, "…", self.browse_java, width=38, height=30).pack(
-                side="left", padx=(6, 0)
-            )
-            button(frame, "检测", self.detect_java, width=68, height=30).pack(
-                side="left", padx=(6, 0)
-            )
-            return frame
-
-        self._row(
-            general_card.body,
-            "Java 路径",
-            "新实例默认用这个；实例自己设置过就以实例为准",
-            _java_control,
-        )
-
-        self.log_window_var = tk.BooleanVar(value=True)
-        self._row(
-            general_card.body,
-            "默认打开日志窗口",
-            "可在每个实例里单独覆盖",
-            lambda row: ctk.CTkSwitch(row, text="", variable=self.log_window_var),
-        )
-
-        from gelauncher.core.net import SOURCE_MODE_LABELS, SOURCE_MODES
-
-        self.source_labels = {SOURCE_MODE_LABELS[mode]: mode for mode in SOURCE_MODES}
-        self.source_var = tk.StringVar()
-
-        def _source_control(row):
-            from gelauncher.ui.widgets import Combo
-
-            self.source_combo = Combo(
-                row, variable=self.source_var, values=list(self.source_labels), width=300
-            )
-            return self.source_combo
-
-        self._row(general_card.body, "下载源", "自动 = 官方优先，慢/不通时切镜像", _source_control)
-
-        startup_card = Card(general, "默认启动参数")
-        startup_card.pack(fill="x", padx=4, pady=(0, 10))
         self.default_width_var = tk.StringVar()
         self.default_height_var = tk.StringVar()
 
@@ -1342,13 +1313,24 @@ class SettingsPage(Page):
             ctk.CTkEntry(frame, textvariable=self.default_height_var, width=80).pack(side="left")
             return frame
 
-        self._row(startup_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", _size_control)
+        self._row(basic_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", _size_control)
+
+        self.log_window_var = tk.BooleanVar(value=True)
+        self._row(
+            basic_card.body,
+            "启动时打开日志窗口",
+            "每次启动都弹一个独立日志窗口，方便看崩溃信息",
+            lambda row: ctk.CTkSwitch(row, text="", variable=self.log_window_var),
+        )
+
+        advanced_card = Card(general, "高级设置（默认值）")
+        advanced_card.pack(fill="x", padx=4, pady=(0, 10))
 
         self.default_jvm_var = tk.StringVar()
         self._row(
-            startup_card.body,
+            advanced_card.body,
             "JVM 参数",
-            "追加到 java 命令里，例如 -XX:+UseG1GC",
+            "追加到 java 命令里，例如 -XX:+UseG1GC -XX:MaxGCPauseMillis=50",
             lambda row: ctk.CTkEntry(
                 row,
                 textvariable=self.default_jvm_var,
@@ -1373,11 +1355,28 @@ class SettingsPage(Page):
             )
 
         self._row(
-            startup_card.body,
+            advanced_card.body,
             "进程优先级",
-            "实例没单独设置时用这个",
+            "高优先级会让游戏更容易抢到 CPU，但可能拖慢系统其它程序",
             _priority_control,
         )
+
+        other_card = Card(general, "其它")
+        other_card.pack(fill="x", padx=4, pady=(0, 10))
+        from gelauncher.core.net import SOURCE_MODE_LABELS, SOURCE_MODES
+
+        self.source_labels = {SOURCE_MODE_LABELS[mode]: mode for mode in SOURCE_MODES}
+        self.source_var = tk.StringVar()
+
+        def _source_control(row):
+            from gelauncher.ui.widgets import Combo
+
+            self.source_combo = Combo(
+                row, variable=self.source_var, values=list(self.source_labels), width=300
+            )
+            return self.source_combo
+
+        self._row(other_card.body, "下载源", "自动 = 官方优先，慢/不通时切镜像", _source_control)
 
         # 外观
         appearance = self._setting_sections["appearance"]
