@@ -869,9 +869,9 @@ class AccountsPage(Page):
     # ------------------------------------------------------------------ 添加
 
     def add_offline(self) -> None:
-        from tkinter import simpledialog
+        from gelauncher.ui.offline_dialog import ask_offline_name
 
-        name = simpledialog.askstring("离线账号", "玩家名（游戏里显示的名字）：", parent=self)
+        name = ask_offline_name(self)
         if not name:
             return
         name = name.strip()
