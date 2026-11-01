@@ -23,7 +23,7 @@ from .net import DownloadJob, DownloadReport, Fetcher
 ProgressHook = "Callable[[str, str], None]"
 
 #: 内置的 CurseForge API key（打包版直接用，源码运行可用环境变量覆盖）
-DEFAULT_CURSE_API_KEY = "2a$10$FAakVyxZ1Kr.HXQIJa78peti/XI7FhPw15EyBPJXosqnrD795BRse"
+DEFAULT_CURSE_API_KEY = "2a$10$uQkn36P8xEkOVAwXU85coO0zu3A7HZ/6l0ph.xR809qlguT43uPU2"
 CURSE_API_KEY_ENV = "GE_CURSE_API_KEY"
 
 
@@ -478,27 +478,53 @@ def _install_loader(
     return True
 
 
-def _curse_file(project_id: int, file_id: int, api_key: str) -> tuple[str | None, str | None]:
-    """查 CurseForge 文件信息；拿不到下载地址时退回 forgecdn 直链。"""
+#: api.curseforge.com 在部分网络下会被 Cloudflare 直接 403（连 /v1/games 都 403），
+#: HMCL 用的是 mod.mcimirror.top 的代理，实测可用。
+CURSE_API_MIRROR = "https://mod.mcimirror.top/curseforge"
+CURSE_CDN = "https://edge.forgecdn.net/files"
+CURSE_CDN_MIRROR = "https://mod.mcimirror.top/files"
+
+
+def _curse_json(path: str, api_key: str) -> dict:
+    """查 CurseForge API：先官方（带 key），被挡就换 mcimirror 代理。"""
     import urllib.request
 
-    url = f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}"
-    request = urllib.request.Request(
-        url,
-        headers={
-            "X-API-KEY": api_key,
-            "Accept": "application/json",
-            "User-Agent": "gelauncher/0.1",
-        },
-    )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+    attempts: list[tuple[str, dict[str, str]]] = [
+        (
+            f"https://api.curseforge.com/v1{path}",
+            {"X-API-KEY": api_key} if api_key else {},
+        ),
+        (f"{CURSE_API_MIRROR}/v1{path}", {}),
+    ]
+    last_error: Exception | None = None
+    for url, extra in attempts:
+        headers = {"Accept": "application/json", "User-Agent": "gelauncher/0.1"}
+        headers.update(extra)
+        try:
+            with urllib.request.urlopen(
+                urllib.request.Request(url, headers=headers), timeout=20
+            ) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 - 换下一个入口
+            last_error = exc
+    raise ModpackError(f"查 CurseForge 文件失败：{last_error}")
+
+
+def _curse_file(project_id: int, file_id: int, api_key: str) -> tuple[str | None, list[str]]:
+    """查 CurseForge 文件信息，返回 (文件名, 可用下载地址)。"""
+    payload = _curse_json(f"/mods/{project_id}/files/{file_id}", api_key)
     data = payload.get("data") or {}
     name = data.get("fileName")
+    urls: list[str] = []
     download = data.get("downloadUrl")
-    if not download and name:
-        download = f"https://edge.forgecdn.net/files/{file_id // 1000}/{file_id % 1000}/{name}"
-    return name, download
+    if download:
+        urls.append(str(download))
+    if name:
+        urls.append(f"{CURSE_CDN}/{file_id // 1000}/{file_id % 1000}/{name}")
+        urls.append(f"{CURSE_CDN_MIRROR}/{file_id // 1000}/{file_id % 1000}/{name}")
+    # 去重保序
+    urls = list(dict.fromkeys(urls))
+    return name, urls
 
 
 def install_modpack(
@@ -542,14 +568,14 @@ def install_modpack(
         path = entry.path
         if not urls and entry.project_id and entry.file_id and curse_api_key:
             try:
-                name, url = _curse_file(entry.project_id, entry.file_id, curse_api_key)
+                name, curse_urls = _curse_file(entry.project_id, entry.file_id, curse_api_key)
             except Exception as exc:  # noqa: BLE001 - API 查询失败就记账，不中断
                 notify("curse", f"查 CurseForge 文件失败：{exc}")
-                name, url = None, None
+                name, curse_urls = None, []
             if name:
                 path = f"mods/{name}"
-            if url:
-                urls = [url]
+            if curse_urls:
+                urls = curse_urls
         target = _safe_target(root, path)
         if not urls:
             # MCBBS 的 addon 文件本来就在 overrides 里，没有 URL 很正常
