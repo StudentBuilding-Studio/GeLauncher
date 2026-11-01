@@ -118,13 +118,13 @@ def test_instance_settings_are_saved_per_version(app, tmp_path: Path):
 
 
 def test_accounts_page_add_offline_and_select(app, monkeypatch):
-    import tkinter.simpledialog
+    from gelauncher.ui import offline_dialog
 
     accounts = app.pages["accounts"]
     app.show_page("accounts")
     assert "offline|Player" in accounts.tree.get_children()
 
-    monkeypatch.setattr(tkinter.simpledialog, "askstring", lambda *a, **k: "Steve")
+    monkeypatch.setattr(offline_dialog, "ask_offline_name", lambda parent: "Steve")
     accounts.add_offline()
 
     assert "Steve" in app.config.accounts
@@ -411,7 +411,10 @@ def _pump(root, seconds: float = 2.0, predicate=None) -> None:
         time.sleep(0.02)
 
 
-def test_delete_version_removes_directory_and_returns_to_list(app):
+def test_delete_version_removes_directory_and_returns_to_list(app, monkeypatch):
+    from gelauncher.ui import confirm
+
+    monkeypatch.setattr(confirm, "ask_danger", lambda *a, **k: True)
     versions = app.pages["versions"]
     versions.open("1.21.8")
     target = app.layout.version_dir("1.21.8")

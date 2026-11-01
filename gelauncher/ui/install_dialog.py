@@ -66,6 +66,7 @@ class VanillaInstallDialog(ctk.CTkToplevel):
             on_row=lambda _iid: self._sync_instance_name(),
         )
         self.tree.grid(row=0, column=0, sticky="nsew")
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._sync_instance_name())
 
         form = ctk.CTkFrame(self, fg_color="transparent")
         form.pack(fill="x", padx=14, pady=(8, 0))

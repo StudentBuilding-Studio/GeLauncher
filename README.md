@@ -1,8 +1,8 @@
 # Ge 启动器
 
-一个只给几个朋友用的极简 Minecraft: Java Edition 启动器。Python 3.11+ / Tkinter，**无第三方运行时依赖**，不需要编译。
+一个只给几个朋友用的极简 Minecraft: Java Edition 启动器。Python 3.11+ / CustomTkinter（`pip install -r requirements.txt`），不需要编译。
 
-支持原版 / Fabric / Forge / NeoForge，支持离线账号和微软账号，能直接接管 HMCL、PCL2、官方启动器已经装好的 `.minecraft`。
+支持原版 / Fabric / Forge / NeoForge，支持离线账号（微软账号等待 Mojang 审批，暂不可用），能直接接管 HMCL、PCL2、官方启动器已经装好的 `.minecraft`。
 
 设计思路见 [简化启动器方案.md](简化启动器方案.md)。
 
@@ -25,8 +25,12 @@
   自动装原版 + 加载器，下载清单文件并解压 overrides
 - CurseForge 文件默认走 `mod.mcimirror.top` 代理解析（不需要 API key）；
   想用官方 API 就设置环境变量 `GE_CURSE_API_KEY` 或配置 `curse_api_key`（不内置，避免泄露）
-- **账号**：离线账号 + 微软账号（设备代码流登录，token 过期自动刷新）
-- **界面**：版本 / 账号 / 设置三个一级页面，每个版本有独立设置（内存、Java、分辨率、日志窗口）
+- **Java**：按版本要求的 `javaVersion` 自动挑（≥ 要求里最小的那个）；本机缺 Java 时弹窗询问，
+  可直接从 Adoptium 下载安装 Temurin JDK 到 `<游戏目录>/launcher/java/`，并加入候选列表
+- **账号**：离线账号（创建时校验只允许字母/数字/下划线）；微软账号见下方"账号"一节
+- **界面**：CustomTkinter 实现，版本 / 账号 / 设置三个一级页面；支持浅色 / 深色 / 跟随系统主题
+- **安装/导入可取消**：日志窗口带"取消"按钮，取消后杀掉 installer/processor 子进程并清理这次新建的残留
+- **版本详情**：实例设置（内存、Java、窗口尺寸、日志窗口）、启动、浏览（日志/版本目录/世界/模组/资源包/光影包/截图）
 - **日志**：每个游戏进程一个独立日志窗口，可自动滚动 / 清空 / 保存
 - **验收**：`verify` 子命令做"进程存活 N 秒 + 日志关键字"的机械验收
 
@@ -66,23 +70,26 @@ python -m gelauncher launch --version-id 1.21.8                      # 启动
 
 ## 账号
 
-- **离线账号**：给个名字就能用，UUID 按 `md5("OfflinePlayer:<name>")` 算，适合本机几个人玩
-- **微软账号**：设备代码流登录，登录后可以联机、显示正版皮肤。client id 已内置在程序里，
-  用户不需要自己注册应用；原理和排错见 [msa-setup.md](msa-setup.md)
+- **离线账号**：给个名字就能用，UUID 按 `md5("OfflinePlayer:<name>")` 算，适合本机几个人玩。
+  创建时只允许大小写英文字母、数字和下划线（Minecraft 玩家名规则），中文/空格/特殊字符会被拦下
+- **微软账号：目前还不支持使用**。设备代码流登录的代码已经写好，但需要 Mojang 对启动器应用做 API 审批；
+  在获批之前正版登录进游戏会被拒绝，所以暂时请用离线账号。流程和审批说明见 [msa-setup.md](msa-setup.md)
 
 > 微软登录这类服务的 token 只保存在本机 `config.json`，不会上传到任何服务器，也不要把它发给别人。
 
 ## 已知限制
 
 - Forge **≤1.12.1** 的 installer 没有 `--installClient`（实测），所以只能用 Ge 启动已装好的老实例，不能用 Ge 安装
-- 微软账号登录需要 Mojang 对启动器应用做 API 审批（详见 [msa-setup.md](msa-setup.md)）；
-  在获批之前，微软账号能登录但进游戏会被 403 拒绝
+- **微软账号尚未支持**：等待 Mojang 审批，获批前请使用离线账号
+- CurseForge 的官方 API 在部分网络下会被 Cloudflare 403，默认走第三方代理 `mod.mcimirror.top`；
+  代理的可用性不由本项目控制
 - 没做联机、模组管理、皮肤、自动更新——这些不在范围内
 
 ## 开发
 
 ```bash
-python -m pip install pytest
+python -m pip install -r requirements.txt   # 运行时依赖（customtkinter）
+python -m pip install pytest                # 测试依赖
 python -m pytest
 ```
 
@@ -91,6 +98,10 @@ python -m pytest
 ```
 gelauncher/
 ├── core/                 # 无界面核心，不 import tkinter
+│   ├── cancel.py         # 协作式取消（CancelToken）
+│   ├── java_install.py   # 自动下载安装 Temurin JDK
+│   ├── forge_processors.py # Forge/NeoForge processors 安装
+│   ├── modpack.py        # 整合包识别与导入
 │   ├── models.py         # 版本 JSON → dataclass
 │   ├── layout.py         # .minecraft 目录约定
 │   ├── rules.py          # rules[] 求值
@@ -107,10 +118,16 @@ gelauncher/
 │   ├── logfmt.py         # 把游戏 stdout 的 log4j XML 转成可读日志
 │   └── launch.py         # 检查 + 拼命令 + 起进程
 ├── cli.py                # 所有能力的命令行入口
-└── ui/                   # Tkinter 界面（只是 core 的薄壳）
-    ├── app.py            # 主窗口 / 导航
+└── ui/                   # CustomTkinter 界面（只是 core 的薄壳）
+    ├── app.py            # 主窗口 / 导航 / 任务与预载
     ├── pages.py          # 版本、账号、设置三个页面
-    ├── log_window.py     # 独立日志窗口
+    ├── theme.py          # 主题/配色（浅色/深色/跟随系统）
+    ├── instance_list.py  # Canvas 自绘的版本/账号列表
+    ├── widgets.py        # Card/Combo/label/button 等复用组件
+    ├── confirm.py        # 危险操作确认框（红色删除按钮）
+    ├── offline_dialog.py # 离线账号创建（命名校验）
+    ├── install_dialog.py / loader_dialog.py / import_dialog.py
+    ├── log_window.py     # 独立日志窗口（安装时可取消）
     └── msa_login.py      # 微软登录对话框
 ```
 
@@ -121,7 +138,8 @@ gelauncher/
 - [x] M2 安装原版（manifest + 镜像 + sha1）
 - [x] M3 Fabric（meta profile）
 - [x] M4 Forge / NeoForge（官方 installer + 预置库 + 合并进现有版本）
-- [x] M5 Tkinter UI（版本 / 账号 / 设置 + 独立日志窗口）
+- [x] M5 UI（CustomTkinter：版本 / 账号 / 设置 + 独立日志窗口）
+- [x] M5.5 深色主题、安装可取消、Java 自动安装、实例预载
 - [ ] M6 打包分发
 
 ## 免责声明
