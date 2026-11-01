@@ -87,7 +87,7 @@ def test_click_version_opens_detail_page(app):
     assert versions.current == "1.21.8"
     assert versions.detail_frame.winfo_manager() == "grid"
     assert versions.list_frame.winfo_manager() == ""
-    assert versions.info_vars["原版"].get() == "1.21.8"
+    assert versions.info_vars["版本"].get() == "1.21.8"
 
     versions.show_list()
     assert versions.list_frame.winfo_manager() == "grid"
@@ -465,8 +465,12 @@ def test_install_dialog_lists_and_filters_versions(app, monkeypatch):
         "gelauncher.core.install_vanilla.remote_versions", lambda fetcher: list(fake)
     )
 
-    chosen: list[str] = []
-    dialog = install_dialog.VanillaInstallDialog(app.root, app, chosen.append)
+    chosen: list[tuple[str, str]] = []
+    def _choose(version_id, instance):
+        chosen.append((version_id, instance))
+        return None
+
+    dialog = install_dialog.VanillaInstallDialog(app.root, app, _choose)
     _pump(app.root, 3.0, lambda: dialog.ready)
 
     assert set(dialog.tree.get_children()) == {"1.21.8", "1.21.9"}
@@ -482,4 +486,64 @@ def test_install_dialog_lists_and_filters_versions(app, monkeypatch):
 
     dialog.tree.selection_set("1.21.9")
     dialog.install_selected()
-    assert chosen == ["1.21.9"]
+    assert chosen == [("1.21.9", "1.21.9")]
+
+# --------------------------------------------------------------------------- #
+# 实例 / 加载器版本选择
+# --------------------------------------------------------------------------- #
+
+
+def test_install_vanilla_blocks_duplicate_instance(app, monkeypatch):
+    from gelauncher.ui import app as ui_app
+
+    called = {}
+
+    class FakeReport:
+        version_id = "新实例"
+
+        class downloads:
+            failures = []
+            downloaded = 0
+
+        messages = []
+
+    def fake_install(layout, version_id, *, instance_name=None, progress=None, fetcher=None):
+        called["instance"] = instance_name
+        return FakeReport()
+
+    monkeypatch.setattr(ui_app, "install_version", fake_install)
+
+    # 1.21.8 这个实例已经存在：直接返回错误，不启动任务
+    error = app.install_vanilla("1.21.8")
+    assert error and "已经存在" in error
+    assert "instance" not in called
+
+    # 换个实例名才真的开装
+    assert app.install_vanilla("1.21.8", "新实例") is None
+    _pump(app.root, 5.0, lambda: "instance" in called)
+    assert called["instance"] == "新实例"
+
+
+def test_version_list_shows_instance_and_version(app):
+    versions = app.pages["versions"]
+    versions.refresh()
+    values = versions.tree.item("1.21.8", "values")
+    assert values[0] == "1.21.8", "版本列应该显示真实游戏版本"
+
+
+def test_loader_dialog_lists_and_picks_version(app, monkeypatch):
+    from gelauncher.core import install_loader as core
+    from gelauncher.ui.loader_dialog import LoaderInstallDialog
+
+    monkeypatch.setattr(
+        core, "fabric_loader_versions", lambda fetcher, mc: ["0.99.0", "0.99.1"]
+    )
+    chosen: list[tuple[str, str]] = []
+    dialog = LoaderInstallDialog(
+        app.root, app, "1.21.8", "1.21.8", "fabric", lambda kind, version: chosen.append((kind, version))
+    )
+    _pump(app.root, 3.0, lambda: dialog.ready)
+
+    assert dialog.tree.get_children() == ("0.99.1", "0.99.0"), "最新的排前面"
+    dialog.install_selected()
+    assert chosen == [("fabric", "0.99.1")]

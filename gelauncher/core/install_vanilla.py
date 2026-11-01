@@ -35,6 +35,26 @@ class InstallError(RuntimeError):
     """安装过程中不可恢复的错误。"""
 
 
+class InstanceExistsError(InstallError):
+    """同名实例已经存在。"""
+
+
+#: Windows 下不能出现在文件夹名里的字符
+_INSTANCE_FORBIDDEN = set('<>:"/\\|?*')
+
+
+def validate_instance_name(name: str) -> str:
+    """实例名就是文件夹名：不能为空、不能带路径分隔符、不能有 Windows 保留字符。"""
+    text = (name or "").strip()
+    if not text:
+        raise InstallError("实例名不能为空")
+    if text in (".", "..") or set(text) & _INSTANCE_FORBIDDEN:
+        raise InstallError(f"实例名「{text}」里有不能用的字符")
+    if text.endswith(".") or text.endswith(" "):
+        raise InstallError("实例名结尾不能是点或空格")
+    return text
+
+
 @dataclass(frozen=True)
 class RemoteVersion:
     id: str
@@ -176,18 +196,27 @@ def install_version(
     layout: GameLayout,
     version_id: str,
     *,
+    instance_name: str | None = None,
     fetcher: Fetcher | None = None,
     with_assets: bool = True,
     env: Environment | None = None,
     progress: ProgressHook | None = None,
     sources: Iterable[Source] | None = None,
 ) -> InstallReport:
-    """安装一个原版版本。返回报告，失败信息在 ``report.downloads.failures``。"""
+    """安装一个原版版本到一个实例。
+
+    实例名 = ``versions/<实例>/`` 的文件夹名，默认和版本号相同。
+    同名实例已经存在时抛 ``InstanceExistsError``（不再覆盖，和 HMCL 一样）。
+    """
+    instance = validate_instance_name(instance_name or version_id)
+    if layout.instance_exists(instance) or layout.version_dir(instance).exists():
+        raise InstanceExistsError(f"实例「{instance}」已经存在")
+
     fetcher = fetcher or Fetcher(sources=tuple(sources) if sources else DEFAULT_SOURCES)
     if fetcher.cache_dir is None:
         fetcher = replace(fetcher, cache_dir=layout.root / "launcher" / "cache" / "meta")
     env = env or Environment()
-    report = InstallReport(version_id=version_id)
+    report = InstallReport(version_id=instance)
 
     _notify(progress, "manifest", 0, 1, "读取版本列表…")
     remote = find_remote(fetcher, version_id)
@@ -202,24 +231,32 @@ def install_version(
 
     # ---- 版本 JSON ----
     _notify(progress, "version", 0, 1, f"下载 {version_id} 的版本 JSON…")
-    version_json_path = layout.version_json_path(version_id)
+    version_json_path = layout.version_json_path(instance)
     result = fetcher.download(
         DownloadJob(
             urls=[remote.url],
             destination=version_json_path,
             sha1=remote.sha1,
-            label=f"{version_id}.json",
+            label=f"{instance}.json",
         )
     )
     report.downloads.merge(result)
     if not version_json_path.is_file():
         report.messages.append(f"版本 JSON 下载失败：{result.failures}")
         return report
-    version = VersionJson.load(version_json_path)
+
+    # 实例名作为 id，真实版本号记在 clientVersion 里（显示"版本"列时用）
+    raw = json.loads(version_json_path.read_text(encoding="utf-8-sig"))
+    raw["id"] = instance
+    raw["clientVersion"] = version_id
+    version_json_path.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    version = VersionJson.from_dict(raw, f"{instance}.json")
     report.version = version
 
-    # ---- 客户端 jar ----
-    jar_id = version.jar or version_id
+    # ---- 客户端 jar（放在实例自己的目录里，实例之间互不影响）----
+    jar_id = instance
     client = version.downloads.get("client")
     if client is None or not client.url:
         report.messages.append("版本 JSON 里没有 downloads.client，跳过客户端 jar")

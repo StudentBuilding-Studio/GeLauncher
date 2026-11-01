@@ -96,6 +96,36 @@ def _natives_target_dir(version: VersionJson, base_dir: Path) -> Path:
     return base_dir
 
 
+def _resolve_jar(layout: GameLayout, version: VersionJson, version_id: str) -> Path | None:
+    """找游戏 jar：先看实例自己的，再顺着 inheritsFrom 找原版的。
+
+    实例名可以和版本号不同（比如实例 "生存服" 用的是 1.21.8），
+    老实例 / 别的启动器留下的目录也可能把 jar 放在父版本里。
+    """
+    candidates = [version.jar or version_id, version_id]
+    for name in candidates:
+        path = layout.version_jar_path(name)
+        if path.is_file():
+            return path
+    probe = version.inherits_from
+    seen: set[str] = set()
+    while probe and probe not in seen:
+        seen.add(probe)
+        path = layout.version_jar_path(probe)
+        if path.is_file():
+            return path
+        try:
+            parent = layout.load_json(probe)
+        except VersionJsonError:
+            return None
+        if parent.jar:
+            path = layout.version_jar_path(parent.jar)
+            if path.is_file():
+                return path
+        probe = parent.inherits_from
+    return None
+
+
 def _missing(paths: Iterable[Path]) -> list[Path]:
     return [path for path in paths if not path.is_file()]
 
@@ -145,11 +175,10 @@ def prepare(options: LaunchOptions) -> LaunchPlan:
     )
 
     # ---- 游戏 jar ----
-    jar_id = version.jar or version_id
-    jar_path = layout.version_jar_path(jar_id)
-    if not jar_path.is_file():
+    jar_path = _resolve_jar(layout, version, version_id)
+    if jar_path is None:
         raise LaunchError(
-            f"找不到游戏 jar：{jar_path}\n"
+            f"找不到游戏 jar：{layout.version_jar_path(version.jar or version_id)}\n"
             "Fabric/Forge 这类版本需要先装好对应的原版，或者版本目录里的 jar 被删了。"
         )
     classpath.append(jar_path)

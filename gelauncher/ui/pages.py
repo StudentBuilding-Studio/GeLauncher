@@ -109,12 +109,17 @@ class VersionsPage(Page):
         )
 
         self.tree = ttk.Treeview(
-            versions, columns=("loader", "java"), show="tree headings", selectmode="browse"
+            versions,
+            columns=("version", "loader", "java"),
+            show="tree headings",
+            selectmode="browse",
         )
-        self.tree.heading("#0", text="版本")
+        self.tree.heading("#0", text="实例")
+        self.tree.heading("version", text="版本")
         self.tree.heading("loader", text="加载器")
         self.tree.heading("java", text="Java")
-        self.tree.column("#0", width=300, stretch=True)
+        self.tree.column("#0", width=220, stretch=True)
+        self.tree.column("version", width=100, anchor="center", stretch=False)
         self.tree.column("loader", width=90, anchor="center", stretch=False)
         self.tree.column("java", width=70, anchor="center", stretch=False)
         self.tree.grid(row=1, column=0, sticky="nsew")
@@ -231,7 +236,11 @@ class VersionsPage(Page):
                 version = layout.load_json(version_id)
             except VersionJsonError as exc:
                 self.tree.insert(
-                    "", "end", iid=version_id, text=f"{version_id}（JSON 有问题）", values=("?", "?")
+                    "",
+                    "end",
+                    iid=version_id,
+                    text=f"{version_id}（JSON 有问题）",
+                    values=("?", "?", "?"),
                 )
                 self.app.notify(f"{version_id} 的 JSON 有问题：{exc}")
                 continue
@@ -240,12 +249,16 @@ class VersionsPage(Page):
                 "end",
                 iid=version_id,
                 text=version_id,
-                values=(detect_loader(version), version.java_version or "?"),
+                values=(
+                    layout.actual_version(version_id),
+                    detect_loader(version),
+                    version.java_version or "?",
+                ),
             )
             count += 1
         env = current_env()
         self.app.set_status(
-            f"{layout.root} · {env.os_name}/{env.arch} · 共 {count} 个版本"
+            f"{layout.root} · {env.os_name}/{env.arch} · 共 {count} 个实例"
         )
         # 刚装完的版本要能一眼看到：选中并滚到它
         if select and select in self.tree.get_children():
@@ -279,12 +292,13 @@ class VersionsPage(Page):
         info.columnconfigure(1, weight=1)
         self.info_vars = {
             key: tk.StringVar(value="-")
-            for key in ("mainClass", "原版", "assets", "库", "隔离目录")
+            for key in ("mainClass", "实例", "版本", "assets", "库", "隔离目录")
         }
         for index, (label, key) in enumerate(
             (
                 ("主类", "mainClass"),
-                ("原版", "原版"),
+                ("实例", "实例"),
+                ("游戏版本", "版本"),
                 ("资源索引", "assets"),
                 ("库数量", "库"),
                 ("游戏目录", "隔离目录"),
@@ -295,11 +309,11 @@ class VersionsPage(Page):
                 row=index, column=1, sticky="w", pady=2
             )
 
-        ttk.Button(info, text="删除这个版本…", command=self._delete_version).grid(
+        ttk.Button(info, text="删除这个实例…", command=self._delete_version).grid(
             row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(12, 0)
         )
 
-        settings = ttk.LabelFrame(body, text="版本设置", padding=10)
+        settings = ttk.LabelFrame(body, text="实例设置", padding=10)
         settings.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
         settings.columnconfigure(1, weight=1)
 
@@ -416,7 +430,8 @@ class VersionsPage(Page):
         self.title_var.set(version_id)
         base = self.app.base_mc_version(version_id)
         self.info_vars["mainClass"].set(version.main_class or "?")
-        self.info_vars["原版"].set(base)
+        self.info_vars["实例"].set(version_id)
+        self.info_vars["版本"].set(base)
         self.info_vars["assets"].set(
             version.asset_index.id if version.asset_index else (version.assets or "?")
         )
@@ -538,8 +553,17 @@ class VersionsPage(Page):
             messagebox.showwarning("目录不存在", str(path))
 
     def _install_loader(self, kind: str) -> None:
+        from gelauncher.ui.loader_dialog import LoaderInstallDialog
+
         if self.current:
-            self.app.install_loader(self.app.base_mc_version(self.current), kind)
+            LoaderInstallDialog(
+                self,
+                self.app,
+                self.current,
+                self.app.base_mc_version(self.current),
+                kind,
+                self.app.install_loader,
+            )
 
     def _uninstall_loader(self) -> None:
         if self.current:

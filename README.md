@@ -9,9 +9,11 @@
 ## 功能
 
 - **启动**：解析版本 JSON、合并 `inheritsFrom`、按规则过滤库、解压 natives、拼 `java` 命令行
+- **实例即文件夹**：`versions/<实例名>/`，游戏版本作为参数记在 JSON 的 `clientVersion` 里；实例名重复会阻止安装（不再覆盖）
 - **安装原版**：官方 version_manifest → 版本 JSON → 库 / assets / 客户端 jar，全程 sha1 校验，多源自动切换
-- **安装加载器**（Fabric / Forge / NeoForge，全部装进现有版本，和 HMCL 的 patch 一样）：
-  - 直接给 `1.21.8` 装，版本名不变，启动它就是对应加载器
+- **安装加载器**（Fabric / Forge / NeoForge，全部装进现有实例，和 HMCL 的 patch 一样）：
+  - 点「装 Fabric / Forge / NeoForge」会先弹出该实例可用的加载器版本列表，选版本再装
+  - 实例名不变，启动它就是对应加载器
   - 原版 JSON 备份成 `<id>.json.vanilla-backup`，随时可以「卸载加载器」还原
   - 一个版本同时只能装一个加载器；装第二个会提示先卸载
   - NeoForge 的版本列表走 BMCLAPI 专用接口，installer 需要的库会先用镜像预下载
@@ -37,7 +39,8 @@ python -m gelauncher doctor
 常用命令：
 
 ```bash
-python -m gelauncher install --version-id 1.21.8 --game-dir <目录>   # 装原版
+python -m gelauncher install --version-id 1.21.8 --game-dir <目录>   # 装原版（实例默认同名）
+python -m gelauncher install --version-id 1.21.8 --instance-name 生存服 --game-dir <目录>   # 自定义实例名
 python -m gelauncher install-loader --loader fabric --mc 1.21.8      # 装 Fabric
 python -m gelauncher install-loader --loader forge  --mc 1.21.8      # 装 Forge
 python -m gelauncher install-loader --loader neoforge --mc 26.3       # 装 NeoForge (26.3 = 26.3.0.x)

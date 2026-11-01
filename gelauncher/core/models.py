@@ -323,6 +323,8 @@ class VersionJson:
     type: str | None = None
     # 该版本实际使用的 jar id，缺省等于 id
     jar: str | None = None
+    # 实例对应的真实游戏版本（实例名和版本号可以不同，HMCL 的 instance 也是这么存的）
+    client_version: str | None = None
     release_time: str | None = None
 
     # ---------------------------------------------------------------- 解析
@@ -405,6 +407,7 @@ class VersionJson:
             inherits_from=_optional_str(data, "inheritsFrom"),
             type=_optional_str(data, "type"),
             jar=_optional_str(data, "jar"),
+            client_version=_optional_str(data, "clientVersion"),
             release_time=_optional_str(data, "releaseTime"),
         )
 

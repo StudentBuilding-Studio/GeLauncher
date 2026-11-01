@@ -199,11 +199,21 @@ def test_install_is_idempotent(repo, tmp_path: Path):
     fetcher = Fetcher(sources=(primary, mirror), retries=1, timeout=5, threads=2)
 
     install_vanilla.install_version(layout, "1.99.0", fetcher=fetcher)
-    second = install_vanilla.install_version(layout, "1.99.0", fetcher=fetcher)
 
+    # 同名实例不再覆盖，直接拒绝
+    with pytest.raises(install_vanilla.InstanceExistsError):
+        install_vanilla.install_version(layout, "1.99.0", fetcher=fetcher)
+
+    # 换个实例名可以再装一份，公共文件（库 / assets）都跳过
+    second = install_vanilla.install_version(
+        layout, "1.99.0", instance_name="1.99.0-copy", fetcher=fetcher
+    )
     assert second.ok
-    assert second.downloads.downloaded == 0
-    assert second.downloads.skipped == meta["downloaded_files"]
+    # 新实例只需要自己的 JSON + jar，库和 assets 复用
+    assert second.downloads.downloaded == 2
+    assert second.downloads.skipped == meta["downloaded_files"] - 2
+    assert layout.version_json_path("1.99.0-copy").is_file()
+    assert layout.version_jar_path("1.99.0-copy").is_file()
 
 
 def test_falls_back_to_mirror_per_file(repo, tmp_path: Path):

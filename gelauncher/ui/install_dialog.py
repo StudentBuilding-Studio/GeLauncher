@@ -69,8 +69,18 @@ class VanillaInstallDialog(tk.Toplevel):
         bottom.pack(fill="x")
         self.status_var = tk.StringVar(value="正在拉取版本列表…")
         ttk.Label(bottom, textvariable=self.status_var, foreground="#666").pack(side="left")
+
+        form = ttk.Frame(self, padding=(10, 0, 10, 6))
+        form.pack(fill="x", before=bottom)
+        ttk.Label(form, text="实例名").pack(side="left")
+        self.instance_var = tk.StringVar()
+        self.instance_entry = ttk.Entry(form, textvariable=self.instance_var, width=28)
+        self.instance_entry.pack(side="left", padx=(6, 0))
+        self.instance_edited = False
+        self.instance_entry.bind("<KeyRelease>", lambda _e: self._mark_edited())
+
         ttk.Button(bottom, text="取消", command=self.destroy).pack(side="right")
-        self.install_button = ttk.Button(bottom, text="安装这个版本", command=self.install_selected)
+        self.install_button = ttk.Button(bottom, text="安装", command=self.install_selected)
         self.install_button.pack(side="right", padx=(0, 8))
         self.install_button.configure(state="disabled")
 
@@ -152,6 +162,17 @@ class VanillaInstallDialog(tk.Toplevel):
                 return kind
         return None
 
+    def _mark_edited(self) -> None:
+        self.instance_edited = True
+
+    def _sync_instance_name(self) -> None:
+        """没手动改过实例名时，跟着选中的版本号自动填。"""
+        if self.instance_edited:
+            return
+        selection = self.tree.selection()
+        if selection:
+            self.instance_var.set(selection[0])
+
     def refresh_rows(self) -> None:
         if not self.ready:
             return
@@ -175,6 +196,7 @@ class VanillaInstallDialog(tk.Toplevel):
             self.tree.selection_set(children[0])
             self.tree.see(children[0])
             self.install_button.configure(state="normal")
+            self._sync_instance_name()
         else:
             self.install_button.configure(state="disabled")
 
@@ -184,5 +206,9 @@ class VanillaInstallDialog(tk.Toplevel):
             messagebox.showinfo("还没选版本", "先在列表里点一个版本", parent=self)
             return
         version_id = selection[0]
+        instance = self.instance_var.get().strip() or version_id
+        error = self.on_choose(version_id, instance)
+        if error:
+            messagebox.showerror("装不了", error, parent=self)
+            return
         self.destroy()
-        self.on_choose(version_id)

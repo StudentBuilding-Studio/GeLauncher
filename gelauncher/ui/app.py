@@ -289,22 +289,8 @@ class LauncherApp:
     # ---------------------------------------------------------------- 安装 / 命令
 
     def base_mc_version(self, version_id: str) -> str:
-        from gelauncher.core.models import VersionJsonError
-
-        try:
-            version = self.layout.load_json(version_id)
-        except VersionJsonError:
-            return version_id
-        chain = version_id
-        seen: set[str] = set()
-        while version.inherits_from and version.inherits_from not in seen:
-            seen.add(version.inherits_from)
-            chain = version.inherits_from
-            try:
-                version = self.layout.load_json(chain)
-            except VersionJsonError:
-                break
-        return chain
+        """实例对应的真实游戏版本（实例名可以和版本号不同）。"""
+        return self.layout.actual_version(version_id)
 
     def designated_account(self) -> Account:
         """本次启动用的账号（微软账号会自动刷新 token）。"""
@@ -344,27 +330,27 @@ class LauncherApp:
 
         return Fetcher(sources=sources_for(self.config.download_source))
 
-    def install_loader(self, base_version: str, kind: str) -> None:
+    def install_loader(self, instance: str, kind: str, loader_version: str | None = None) -> None:
         from gelauncher.core.install_loader import LOADER_LABELS, loader_of
 
         name = LOADER_LABELS.get(kind, kind)
-        current = loader_of(self.layout, base_version)
+        current = loader_of(self.layout, instance)
         if current == kind:
             return
         if current is not None:
             messagebox.showwarning(
-                "已经有加载器", f"{base_version} 现在装的是 {LOADER_LABELS[current]}，先卸载它。"
+                "已经有加载器", f"{instance} 现在装的是 {LOADER_LABELS[current]}，先卸载它。"
             )
             return
-        log_window = self.open_log_window(base_version)
-        log_window.start_session(f"给 {base_version} 安装 {name}")
+        log_window = self.open_log_window(instance)
+        log_window.start_session(f"给 {instance} 安装 {name}")
         log_window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
         log_window.append(f"[LAUNCHER] 下载源：{self.config.download_source}")
         log_window.set_status(f"安装 {name}…")
         fetcher = self.make_fetcher()
 
         def progress(stage: str, message: str) -> None:
-            self.messages.put(("log", base_version, f"[{stage}] {message}"))
+            self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
             from gelauncher.core import install_loader as loaders
@@ -372,24 +358,36 @@ class LauncherApp:
             try:
                 if kind == "fabric":
                     report = loaders.attach_fabric(
-                        self.layout, base_version, progress=progress, fetcher=fetcher
+                        self.layout,
+                        instance,
+                        loader_version=loader_version,
+                        progress=progress,
+                        fetcher=fetcher,
                     )
                 elif kind == "neoforge":
                     report = loaders.install_neoforge(
-                        self.layout, base_version, progress=progress, fetcher=fetcher
+                        self.layout,
+                        instance,
+                        neoforge_version=loader_version,
+                        progress=progress,
+                        fetcher=fetcher,
                     )
                 else:
                     report = loaders.install_forge(
-                        self.layout, base_version, progress=progress, fetcher=fetcher
+                        self.layout,
+                        instance,
+                        forge_version=loader_version,
+                        progress=progress,
+                        fetcher=fetcher,
                     )
-                self.messages.put(("log", base_version, f"[LAUNCHER] 装好了：{report.version_id}"))
+                self.messages.put(("log", instance, f"[LAUNCHER] 装好了：{report.version_id}"))
                 self.messages.put(
                     ("status", f"{name} 已装进 {report.version_id}（{self.layout.root}）")
                 )
                 self.messages.put(("refresh", report.version_id))
                 self.messages.put(("open_version", report.version_id))
             except Exception as exc:  # noqa: BLE001
-                self.messages.put(("log", base_version, f"[ERROR] {name} 安装失败：{exc}"))
+                self.messages.put(("log", instance, f"[ERROR] {name} 安装失败：{exc}"))
                 self.messages.put(("error", f"{name} 安装失败：{exc}"))
             finally:
                 self.messages.put(("idle", None))
@@ -445,39 +443,58 @@ class LauncherApp:
             page.show_list()
             page.refresh()
 
-    def install_vanilla(self, version_id: str) -> None:
-        window = self.open_log_window(version_id)
-        window.start_session(f"安装原版 {version_id}")
+    def install_vanilla(self, version_id: str, instance_name: str | None = None) -> str | None:
+        """装原版到指定实例；返回错误文案（None 表示已经开装）。"""
+        from gelauncher.core.install_vanilla import (
+            InstallError,
+            validate_instance_name,
+        )
+
+        try:
+            instance = validate_instance_name(instance_name or version_id)
+        except InstallError as exc:
+            return str(exc)
+        if self.layout.instance_exists(instance) or self.layout.version_dir(instance).exists():
+            return f"实例「{instance}」已经存在，换个名字"
+
+        window = self.open_log_window(instance)
+        window.start_session(f"安装 {version_id} 到实例「{instance}」")
         window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
         window.append(f"[LAUNCHER] 下载源：{self.config.download_source}")
         window.set_status(f"安装 {version_id}…")
         fetcher = self.make_fetcher()
 
         def progress(stage: str, done: int, total: int, message: str) -> None:
-            self.messages.put(("log", version_id, f"[{stage}] {message}"))
+            self.messages.put(("log", instance, f"[{stage}] {message}"))
             self.messages.put(("progress", done, total))
 
         def work() -> None:
             try:
                 report = install_version(
-                    self.layout, version_id, progress=progress, fetcher=fetcher
+                    self.layout,
+                    version_id,
+                    instance_name=instance,
+                    progress=progress,
+                    fetcher=fetcher,
                 )
                 if report.downloads.failures:
                     self.messages.put(
-                        ("log", version_id, f"[ERROR] {len(report.downloads.failures)} 个文件失败")
+                        ("log", instance, f"[ERROR] {len(report.downloads.failures)} 个文件失败")
                     )
                 self.messages.put(
-                    ("log", version_id, f"[LAUNCHER] 安装完成：下载 {report.downloads.downloaded} 个文件")
+                    ("log", instance, f"[LAUNCHER] 安装完成：下载 {report.downloads.downloaded} 个文件")
                 )
-                self.messages.put(("status", f"{version_id} 安装完成"))
+                self.messages.put(("status", f"{instance} 安装完成"))
                 self.messages.put(("refresh", report.version_id))
+                self.messages.put(("open_version", report.version_id))
             except Exception as exc:  # noqa: BLE001
-                self.messages.put(("log", version_id, f"[ERROR] 安装失败：{exc}"))
+                self.messages.put(("log", instance, f"[ERROR] 安装失败：{exc}"))
                 self.messages.put(("error", f"安装失败：{exc}"))
             finally:
                 self.messages.put(("idle", None))
 
         self._start_job(work)
+        return None
 
     def switch_game_dir(self, path: str) -> None:
         """切换/添加游戏目录（版本页左侧目录列表也走这里）。"""

@@ -71,8 +71,8 @@ BMCLAPI = Source(
         # 两个加载器的 Maven 仓库：镜像里有同一套坐标（实测 fabric-loader 1.14MB/s）
         ("maven.fabricmc.net", "https://bmclapi2.bangbang93.com/maven"),
         ("maven.minecraftforge.net", "https://bmclapi2.bangbang93.com/maven"),
-        # NeoForge：官方路径带 /releases，镜像里没有这一段
-        ("maven.neoforged.net/releases", "https://bmclapi2.bangbang93.com/maven"),
+        # NeoForge：镜像保留了官方的 /releases 段（实测 /maven/org/... 会卡住，
+        # /maven/releases/org/... 才是 200），所以这里只换 host、不动路径
         ("maven.neoforged.net", "https://bmclapi2.bangbang93.com/maven"),
     ),
     allow_insecure_tls=True,
@@ -464,10 +464,10 @@ class Fetcher:
 
         destination.parent.mkdir(parents=True, exist_ok=True)
 
-        # 和 HMCL 一样：候选源并发抢，谁先下完用谁。
+        # 和 HMCL 一样：候选 URL 并发抢，谁先下完用谁。
         # 之前是"先官方、超时再镜像"，光等官方超时就能把 8 个小库拖成三分钟。
         candidates = [
-            source
+            (job_url, source)
             for job_url in job.urls
             for source in self._ordered_sources(job_url)
         ]
@@ -503,20 +503,25 @@ class Fetcher:
         return report
 
     def _download_racing(
-        self, job: DownloadJob, destination: Path, candidates: Sequence[Source]
+        self,
+        job: DownloadJob,
+        destination: Path,
+        candidates: Sequence[tuple[str, Source]],
     ) -> DownloadReport | None:
-        """多个源同时下载同一个文件，第一个校验通过的直接采用。
+        """多个候选 URL 同时下载同一个文件，第一个校验通过的直接采用。
 
         每个候选写自己的 ``.part``，赢家先 os.replace；其余线程看到
         ``winner`` 事件后放弃写盘并清理自己的临时文件。
         """
         winner = threading.Event()
         winner_source: list[Source] = []
+        winner_url: list[str] = []
         errors: list[str] = []
         lock = threading.Lock()
 
-        def attempt(source: Source) -> bool:
-            url = source.rewrite(job.urls[0])
+        def attempt(candidate: tuple[str, Source]) -> bool:
+            job_url, source = candidate
+            url = source.rewrite(job_url)
             part = destination.with_name(f"{destination.name}.{abs(hash((source.name, url)))}.part")
             part.unlink(missing_ok=True)
             replaced = False
@@ -537,6 +542,7 @@ class Fetcher:
                 replaced = True
                 with lock:
                     winner_source.append(source)
+                    winner_url.append(url)
                 return True
             except Exception as exc:  # noqa: BLE001
                 with lock:
@@ -549,7 +555,7 @@ class Fetcher:
                     part.unlink(missing_ok=True)
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
-        futures = [pool.submit(attempt, source) for source in candidates]
+        futures = [pool.submit(attempt, candidate) for candidate in candidates]
         try:
             for future in concurrent.futures.as_completed(futures):
                 try:
@@ -558,9 +564,8 @@ class Fetcher:
                             other.cancel()
                         # 等一下输家退出，保证不留下 .part 文件
                         concurrent.futures.wait(futures, timeout=3)
-                        self._note_success(
-                            winner_source[0], winner_source[0].rewrite(job.urls[0])
-                        )
+                        if winner_source:
+                            self._note_success(winner_source[0], winner_url[0])
                         report = DownloadReport()
                         report.downloaded = 1
                         report.bytes_written = destination.stat().st_size if destination.exists() else 0

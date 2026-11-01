@@ -313,11 +313,13 @@ def _print_progress(stage: str, done: int, total: int, message: str) -> None:
 def cmd_install(args: argparse.Namespace, config: Config) -> int:
     layout = _make_layout(args, config)
     fetcher = _fetcher(args, config)
-    print(f"安装 {args.version} → {layout.root}")
+    instance = args.instance_name or args.version
+    print(f"安装 {args.version} → 实例「{instance}」({layout.root})")
     try:
         report = install_version(
             layout,
             args.version,
+            instance_name=instance,
             fetcher=fetcher,
             with_assets=not args.no_assets,
             progress=_print_progress,
@@ -339,7 +341,7 @@ def cmd_install(args: argparse.Namespace, config: Config) -> int:
         version = report.version
         if version and version.java_version:
             print(f"这个版本需要 Java {version.java_version}")
-        print(f"\n可以启动了：python -m gelauncher launch --version-id {args.version}")
+        print(f"\n可以启动了：python -m gelauncher launch --version-id {instance}")
         return 0
     return 1
 
@@ -383,6 +385,7 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
             report = install_neoforge(
                 layout,
                 args.mc,
+                neoforge_version=args.loader_version,
                 fetcher=fetcher,
                 java=java,
                 progress=progress,
@@ -392,7 +395,7 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
             report = install_forge(
                 layout,
                 args.mc,
-                forge_version=args.forge_version,
+                forge_version=args.forge_version or args.loader_version,
                 fetcher=fetcher,
                 java=java,
                 progress=progress,
@@ -534,6 +537,11 @@ def build_parser() -> argparse.ArgumentParser:
     install = sub.add_parser("install", help="安装一个原版版本（库 / assets / 客户端 jar）")
     _add_common(install)
     install.add_argument("--version-id", dest="version", required=True, help="要装的版本，例如 1.21.8")
+    install.add_argument(
+        "--instance-name",
+        dest="instance_name",
+        help="实例名（也就是文件夹名），默认和版本号相同；重名会拒绝安装",
+    )
     install.add_argument("--no-assets", action="store_true", help="跳过 assets（能启动但没声音）")
     install.add_argument(
         "--source",
@@ -556,7 +564,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(loader)
     loader.add_argument("--loader", choices=["fabric", "forge", "neoforge"], required=True)
     loader.add_argument("--mc", required=True, help="原版版本，例如 1.21.8（必须是已经装好的）")
-    loader.add_argument("--loader-version", help="Fabric loader 版本，默认取最新稳定版")
+    loader.add_argument("--loader-version", help="加载器版本（Fabric/NeoForge 都认），默认取最新稳定版")
     loader.add_argument(
         "--separate-version",
         action="store_true",

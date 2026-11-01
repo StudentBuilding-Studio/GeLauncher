@@ -243,3 +243,90 @@ def test_merge_keeps_argument_pairs(layout: GameLayout):
     jvm = merged["arguments"]["jvm"]
     pairs = list(zip(jvm, jvm[1:]))
     assert ("--add-exports", "jdk.naming.dns/com.sun.jndi.dns=java.naming") in pairs
+
+# --------------------------------------------------------------------------- #
+# 实例：实例名 = 文件夹名，版本号是参数
+# --------------------------------------------------------------------------- #
+
+
+def _make_instance(layout, name: str, version: str, main_class: str = "net.minecraft.client.main.Main"):
+    data = json.loads((FIXTURES / "vanilla-1.21.8.json").read_text(encoding="utf-8"))
+    data["id"] = name
+    data["clientVersion"] = version
+    path = layout.version_json_path(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    layout.version_jar_path(name).write_bytes(b"fake jar")
+    return path
+
+
+def test_actual_version_follows_client_version(tmp_path):
+    from gelauncher.core.layout import GameLayout
+
+    layout = GameLayout(tmp_path / ".minecraft")
+    _make_instance(layout, "生存服", "1.21.8")
+    assert layout.actual_version("生存服") == "1.21.8"
+
+    # 别的启动器留下的实例：没有 clientVersion，只能顺着 inheritsFrom 找
+    child = {
+        "id": "1.21.8-fabric-demo",
+        "inheritsFrom": "1.21.8",
+        "mainClass": "x",
+    }
+    path = layout.version_json_path("1.21.8-fabric-demo")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(child), encoding="utf-8")
+    assert layout.actual_version("1.21.8-fabric-demo") == "1.21.8"
+
+
+def test_vexing_instance_names_are_rejected():
+    from gelauncher.core.install_vanilla import InstallError, validate_instance_name
+
+    for bad in ("", "  ", "a/b", "a\\b", "a:b", "..", "a.", "a?"):
+        with pytest.raises(InstallError):
+            validate_instance_name(bad)
+    assert validate_instance_name(" 生存服 ") == "生存服"
+
+
+def test_vanilla_install_writes_client_version(tmp_path):
+    """确认安装出来的实例 JSON 里记了 clientVersion（版本号是参数，不是文件夹名）。"""
+    from gelauncher.core.install_vanilla import install_version
+    from gelauncher.core.layout import GameLayout
+    from gelauncher.core.net import DownloadReport
+
+    version_json = {
+        "id": "1.99.0",
+        "mainClass": "net.minecraft.client.main.Main",
+        "libraries": [],
+        "downloads": {"client": {"url": "https://example/client.jar", "size": 4}},
+    }
+    manifest = {"versions": [{"id": "1.99.0", "type": "release", "url": "https://example/1.99.0.json"}]}
+
+    class FakeFetcher:
+        cache_dir = "cache"
+
+        def get_bytes(self, url, label="", ttl=0.0):
+            return json.dumps(manifest).encode()
+
+        def download(self, job):
+            report = DownloadReport()
+            destination = job.destination
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            if str(destination).endswith(".json"):
+                destination.write_text(json.dumps(version_json), encoding="utf-8")
+            else:
+                destination.write_bytes(b"JAR!")
+            report.downloaded = 1
+            return report
+
+        def download_all(self, jobs, on_done=None):
+            return DownloadReport()
+
+    layout = GameLayout(tmp_path / ".minecraft")
+    install_version(layout, "1.99.0", instance_name="生存服", fetcher=FakeFetcher())
+
+    data = json.loads(layout.version_json_path("生存服").read_text(encoding="utf-8"))
+    assert data["id"] == "生存服"
+    assert data["clientVersion"] == "1.99.0"
+    assert layout.version_jar_path("生存服").is_file()
+    assert layout.actual_version("生存服") == "1.99.0"

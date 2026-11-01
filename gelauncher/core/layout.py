@@ -6,7 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .models import VersionJson
+from .models import VersionJson, VersionJsonError
 from .rules import Environment, current_arch, current_os
 
 
@@ -110,6 +110,29 @@ class GameLayout:
 
     def load_json(self, version_id: str) -> VersionJson:
         return VersionJson.load(self.version_json_path(version_id))
+
+    # ------------------------------------------------------------ 实例
+
+    def instance_exists(self, instance: str) -> bool:
+        return self.version_json_path(instance).is_file()
+
+    def actual_version(self, instance: str, _depth: int = 0) -> str:
+        """实例对应的真实游戏版本。
+
+        新装的实例会把版本号写进 ``clientVersion``；老版本 / 别的启动器给的实例
+        没有这个字段，就顺着 ``inheritsFrom`` 找到最底下的原版。
+        """
+        if _depth > 8:
+            return instance
+        try:
+            version = self.load_json(instance)
+        except VersionJsonError:
+            return instance
+        if version.client_version:
+            return version.client_version
+        if version.inherits_from:
+            return self.actual_version(version.inherits_from, _depth + 1)
+        return version.id or instance
 
 
 def current_env() -> Environment:
