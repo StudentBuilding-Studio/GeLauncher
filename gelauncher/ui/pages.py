@@ -440,15 +440,36 @@ class VersionsPage(Page):
         )
         self.start_button.grid(row=0, column=0, sticky="ew", ipady=6)
 
-        open_panel = ttk.LabelFrame(body, text="打开", padding=10)
+        open_panel = ttk.LabelFrame(body, text="浏览", padding=10)
         open_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(8, 0))
         open_panel.columnconfigure(0, weight=1)
-        ttk.Button(open_panel, text="打开日志窗口", command=self._open_log).grid(
-            row=0, column=0, sticky="ew"
+        open_panel.columnconfigure(1, weight=1)
+        ttk.Button(open_panel, text="日志窗口", command=self._open_log).grid(
+            row=0, column=0, sticky="ew", padx=(0, 3)
         )
-        ttk.Button(open_panel, text="打开版本目录", command=self._open_dir).grid(
-            row=1, column=0, sticky="ew", pady=(6, 0)
+        ttk.Button(open_panel, text="版本目录", command=self._open_dir).grid(
+            row=0, column=1, sticky="ew", padx=(3, 0)
         )
+        browse_items = (
+            ("世界", "saves"),
+            ("模组", "mods"),
+            ("资源包", "resourcepacks"),
+            ("光影包", "shaderpacks"),
+            ("截图", "screenshots"),
+        )
+        for index, (text, folder) in enumerate(browse_items, start=1):
+            row, column = divmod(index, 2)
+            ttk.Button(
+                open_panel,
+                text=text,
+                command=lambda name=folder: self._browse(name),
+            ).grid(
+                row=row,
+                column=column,
+                sticky="ew",
+                pady=(6, 0),
+                padx=(0, 3) if column == 0 else (3, 0),
+            )
 
         install_panel = ttk.LabelFrame(body, text="自动安装", padding=10)
         install_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
@@ -671,9 +692,22 @@ class VersionsPage(Page):
             self.app.open_log_window(self.current)
 
     def _open_dir(self) -> None:
+        self._browse(None)
+
+    def _browse(self, folder: str | None) -> None:
+        """在资源管理器里打开版本目录（或其下的世界/模组/资源包…）。"""
         import os
 
-        path = self.app.layout.version_dir(self.current or "")
+        if not self.current:
+            return
+        path = self.app.layout.version_dir(self.current)
+        if folder:
+            path = path / folder
+            try:
+                path.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                messagebox.showwarning("建不了目录", f"{path}\n{exc}")
+                return
         if path.is_dir():
             os.startfile(str(path))  # noqa: S606
         else:
