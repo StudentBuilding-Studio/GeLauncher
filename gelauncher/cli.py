@@ -271,22 +271,20 @@ def cmd_verify(args: argparse.Namespace, config: Config) -> int:
     return 1
 
 
-def _fetcher(args: argparse.Namespace) -> Fetcher:
-    from .core.net import BMCLAPI, DEFAULT_SOURCES, MIRROR_FIRST_SOURCES, Fetcher
+def _fetcher(args: argparse.Namespace, config: Config) -> Fetcher:
+    """命令行没显式指定 --source 时，跟随设置里的下载源。"""
+    from .core.net import MIRROR_FIRST_SOURCES, Fetcher, sources_for
 
-    if args.source == "official":
-        sources = (DEFAULT_SOURCES[0],)
-    elif args.source == "mirror":
-        sources = (BMCLAPI,)
-    elif args.source == "mirror-first":
+    mode = getattr(args, "source", None) or config.download_source
+    if mode == "mirror-first":
         sources = MIRROR_FIRST_SOURCES
     else:
-        sources = DEFAULT_SOURCES
+        sources = sources_for(mode)
     return Fetcher(sources=sources, threads=args.threads)
 
 
 def cmd_available(args: argparse.Namespace, config: Config) -> int:
-    fetcher = _fetcher(args)
+    fetcher = _fetcher(args, config)
     try:
         versions = remote_versions(fetcher, kind=None if args.type == "all" else args.type)
     except Exception as exc:  # noqa: BLE001 - 网络错误直接给人话
@@ -312,7 +310,7 @@ def _print_progress(stage: str, done: int, total: int, message: str) -> None:
 
 def cmd_install(args: argparse.Namespace, config: Config) -> int:
     layout = _make_layout(args, config)
-    fetcher = _fetcher(args)
+    fetcher = _fetcher(args, config)
     print(f"安装 {args.version} → {layout.root}")
     try:
         report = install_version(
@@ -346,7 +344,7 @@ def cmd_install(args: argparse.Namespace, config: Config) -> int:
 
 def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
     layout = _make_layout(args, config)
-    fetcher = _fetcher(args)
+    fetcher = _fetcher(args, config)
     java = find_java(None, args.java) if args.java else None
 
     def progress(stage: str, message: str) -> None:
@@ -357,15 +355,26 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
 
     try:
         if args.loader == "fabric":
-            report = install_fabric(
-                layout,
-                args.mc,
-                loader_version=args.loader_version,
-                fetcher=fetcher,
-                java=java,
-                progress=progress,
-                use_installer=args.use_installer,
-            )
+            if args.separate_version:
+                report = install_fabric(
+                    layout,
+                    args.mc,
+                    loader_version=args.loader_version,
+                    fetcher=fetcher,
+                    java=java,
+                    progress=progress,
+                    use_installer=args.use_installer,
+                )
+            else:
+                from .core.install_loader import attach_fabric
+
+                report = attach_fabric(
+                    layout,
+                    args.mc,
+                    loader_version=args.loader_version,
+                    fetcher=fetcher,
+                    progress=progress,
+                )
         else:
             report = install_forge(
                 layout,
@@ -382,6 +391,20 @@ def cmd_install_loader(args: argparse.Namespace, config: Config) -> int:
     print(f"\n装好了：{report.version_id}")
     print(f"可以启动了：python -m gelauncher launch --version-id {report.version_id}")
     return 0
+
+
+def cmd_remove_loader(args: argparse.Namespace, config: Config) -> int:
+    from .core.install_loader import detach_fabric
+
+    layout = _make_layout(args, config)
+    if args.loader != "fabric":
+        print("目前只支持卸载 Fabric", file=sys.stderr)
+        return 1
+    if detach_fabric(layout, args.mc):
+        print(f"{args.mc} 已还原成原版")
+        return 0
+    print(f"{args.mc} 没有 Fabric 安装记录（找不到 .vanilla-backup 备份）", file=sys.stderr)
+    return 1
 
 
 def cmd_ui(args: argparse.Namespace, config: Config) -> int:
@@ -504,8 +527,8 @@ def build_parser() -> argparse.ArgumentParser:
     install.add_argument(
         "--source",
         choices=["auto", "official", "mirror", "mirror-first"],
-        default="auto",
-        help="下载源顺序：auto=官方优先再镜像，mirror-first=镜像优先",
+        default=None,
+        help="下载源；不传就跟随设置里的「下载源」（auto=官方优先+自动切换+并行赛跑）",
     )
     install.add_argument("--threads", type=int, default=8, help="并发下载数，默认 8")
     install.set_defaults(func=cmd_install)
@@ -514,7 +537,7 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(available)
     available.add_argument("--type", choices=["release", "snapshot", "all"], default="release")
     available.add_argument("--limit", type=int, default=25)
-    available.add_argument("--source", choices=["auto", "official", "mirror", "mirror-first"], default="auto")
+    available.add_argument("--source", choices=["auto", "official", "mirror", "mirror-first"], default=None)
     available.add_argument("--threads", type=int, default=4)
     available.set_defaults(func=cmd_available)
 
@@ -524,18 +547,29 @@ def build_parser() -> argparse.ArgumentParser:
     loader.add_argument("--mc", required=True, help="原版版本，例如 1.21.8（必须是已经装好的）")
     loader.add_argument("--loader-version", help="Fabric loader 版本，默认取最新稳定版")
     loader.add_argument(
+        "--separate-version",
+        action="store_true",
+        help="Fabric 装成单独的新版本（默认是装进现有版本，和 HMCL 一样）",
+    )
+    loader.add_argument(
         "--use-installer",
         action="store_true",
-        help="Fabric 坚持走官方 installer（默认走 meta profile JSON，不依赖 maven.fabricmc.net）",
+        help="配合 --separate-version：坚持走官方 installer",
     )
     loader.add_argument("--forge-version", help="Forge 版本，例如 47.4.0 或 1.20.1-47.4.0")
     loader.add_argument(
         "--source",
         choices=["auto", "official", "mirror", "mirror-first"],
-        default="auto",
+        default=None,
     )
     loader.add_argument("--threads", type=int, default=4)
     loader.set_defaults(func=cmd_install_loader)
+
+    remove_loader = sub.add_parser("remove-loader", help="卸载装进现有版本的加载器（还原原版）")
+    _add_common(remove_loader)
+    remove_loader.add_argument("--loader", choices=["fabric"], required=True)
+    remove_loader.add_argument("--mc", required=True, help="装过加载器的版本 id，例如 1.21.8")
+    remove_loader.set_defaults(func=cmd_remove_loader)
 
     info = sub.add_parser("info", help="看一个版本的解析结果")
     _add_common(info)

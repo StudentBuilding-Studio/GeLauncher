@@ -246,21 +246,23 @@ def test_detect_java_fills_dropdown(app, monkeypatch, tmp_path: Path):
     assert str(fake_path) in versions.java_combo.cget("values")
 
 
-def test_install_loader_uses_current_game_dir(app, monkeypatch):
-    """装加载器必须装到"当前目录"，不能装到别的目录去。"""
+def test_attach_fabric_uses_current_game_dir(app, monkeypatch):
+    """装 Fabric 必须装到"当前目录"，而且版本 id 不变（装进现有版本）。"""
     import time
+
+    from gelauncher.core import install_loader as core_loader
 
     calls = {}
 
     class FakeReport:
-        version_id = "fabric-loader-0.99-1.21.8"
+        version_id = "1.21.8"
 
-    def fake_install(layout, base, progress=None, **kwargs):
+    def fake_attach(layout, base, progress=None, **kwargs):
         calls["root"] = str(layout.root)
         calls["base"] = base
         return FakeReport()
 
-    monkeypatch.setattr(ui_app, "install_fabric", fake_install)
+    monkeypatch.setattr(core_loader, "attach_fabric", fake_attach)
 
     app.install_loader("1.21.8", "fabric")
     deadline = time.time() + 5
@@ -273,10 +275,12 @@ def test_install_loader_uses_current_game_dir(app, monkeypatch):
 def test_install_loader_logs_target_dir(app, monkeypatch):
     import time
 
-    class FakeReport:
-        version_id = "fabric-loader-0.99-1.21.8"
+    from gelauncher.core import install_loader as core_loader
 
-    monkeypatch.setattr(ui_app, "install_fabric", lambda *a, **k: FakeReport())
+    class FakeReport:
+        version_id = "1.21.8"
+
+    monkeypatch.setattr(core_loader, "attach_fabric", lambda *a, **k: FakeReport())
     app.install_loader("1.21.8", "fabric")
 
     window = app.log_windows["1.21.8"]
@@ -304,16 +308,25 @@ def test_log_window_writes_to_disk(app, tmp_path: Path):
     assert "hello" in text and "boom" in text
 
 
-def test_detail_page_disables_loader_button_for_loader_version(app):
-    """已经是 Fabric 版本时，"装 Fabric"按钮要禁掉，避免"原地重装还提示成功"。"""
-    versions = app.pages["versions"]
-    versions.open("fabric-loader-0.20.1-1.21.8")
-    assert str(versions.fabric_button.cget("state")) == "disabled"
-    assert str(versions.forge_button.cget("state")) == "normal"
+def test_detail_page_disables_fabric_button_when_already_attached(app):
+    """Fabric 已经装进这个版本时，安装按钮禁用、卸载按钮可用。"""
+    import json
 
+    versions = app.pages["versions"]
     versions.open("1.21.8")
     assert str(versions.fabric_button.cget("state")) == "normal"
-    assert str(versions.forge_button.cget("state")) == "normal"
+    assert str(versions.uninstall_fabric_button.cget("state")) == "disabled"
+
+    # 模拟"已装 Fabric"：直接改版本 JSON 的 mainClass
+    path = app.layout.version_json_path("1.21.8")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["mainClass"] = "net.fabricmc.loader.impl.launch.knot.KnotClient"
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+    versions.open("1.21.8")
+    assert str(versions.fabric_button.cget("state")) == "disabled"
+    assert str(versions.fabric_button.cget("text")) == "已装 Fabric"
+    assert str(versions.uninstall_fabric_button.cget("state")) == "normal"
 
 
 def test_base_mc_version_follows_inherits(app):

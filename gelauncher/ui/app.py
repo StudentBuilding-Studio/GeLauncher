@@ -225,6 +225,7 @@ class LauncherApp:
         settings = self.config.instance(version_id)
         window = self.open_log_window(version_id) if settings.get("show_log_window", True) else None
         if window is not None:
+            window.start_session(f"启动 {version_id}")
             window.set_status("准备启动…")
 
         def build_options(account) -> LaunchOptions:
@@ -331,18 +332,35 @@ class LauncherApp:
             messagebox.showerror("拼不出命令", str(exc))
             return
         window = self.open_log_window(version_id)
+        window.start_session(f"启动 {version_id}")
         window.append("=" * 70)
         window.append(plan.printable_command())
         window.append("=" * 70)
         window.set_status("已打印启动命令")
 
+    def make_fetcher(self):
+        """按设置里的「下载源」造下载器（auto / official / mirror）。"""
+        from gelauncher.core.net import Fetcher, sources_for
+
+        return Fetcher(sources=sources_for(self.config.download_source))
+
     def install_loader(self, base_version: str, kind: str) -> None:
         name = "Fabric" if kind == "fabric" else "Forge"
-        if not messagebox.askyesno(f"装 {name}", f"给 {base_version} 装 {name}？"):
+        if kind == "fabric":
+            question = (
+                f"把 Fabric 装进现有的 {base_version}？\n\n"
+                "版本名不变，之后启动这个版本就是 Fabric；原版 JSON 会备份，可以随时卸载。"
+            )
+        else:
+            question = f"给 {base_version} 装 {name}？（Forge 会单独生成一个新版本）"
+        if not messagebox.askyesno(f"装 {name}", question):
             return
         log_window = self.open_log_window(base_version)
+        log_window.start_session(f"给 {base_version} 安装 {name}")
         log_window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
+        log_window.append(f"[LAUNCHER] 下载源：{self.config.download_source}")
         log_window.set_status(f"安装 {name}…")
+        fetcher = self.make_fetcher()
 
         def progress(stage: str, message: str) -> None:
             self.messages.put(("log", base_version, f"[{stage}] {message}"))
@@ -350,14 +368,21 @@ class LauncherApp:
         def work() -> None:
             try:
                 if kind == "fabric":
-                    report = install_fabric(self.layout, base_version, progress=progress)
+                    from gelauncher.core.install_loader import attach_fabric
+
+                    report = attach_fabric(
+                        self.layout, base_version, progress=progress, fetcher=fetcher
+                    )
                 else:
-                    report = install_forge(self.layout, base_version, progress=progress)
+                    report = install_forge(
+                        self.layout, base_version, progress=progress, fetcher=fetcher
+                    )
                 self.messages.put(("log", base_version, f"[LAUNCHER] 装好了：{report.version_id}"))
                 self.messages.put(
-                    ("status", f"{name} 装好了：{report.version_id}（{self.layout.root}）")
+                    ("status", f"{name} 已装进 {report.version_id}（{self.layout.root}）")
                 )
                 self.messages.put(("refresh", report.version_id))
+                self.messages.put(("open_version", report.version_id))
             except Exception as exc:  # noqa: BLE001
                 self.messages.put(("log", base_version, f"[ERROR] {name} 安装失败：{exc}"))
                 self.messages.put(("error", f"{name} 安装失败：{exc}"))
@@ -366,10 +391,25 @@ class LauncherApp:
 
         self._start_job(work)
 
+    def detach_fabric(self, version_id: str) -> None:
+        from gelauncher.core.install_loader import detach_fabric
+
+        if not messagebox.askyesno("卸载 Fabric", f"把 {version_id} 还原成原版？"):
+            return
+        if detach_fabric(self.layout, version_id):
+            self.set_status(f"{version_id} 已还原成原版")
+            self.messages.put(("refresh", version_id))
+            self.messages.put(("open_version", version_id))
+        else:
+            messagebox.showinfo("没有备份", "这个版本没有 Fabric 安装记录，可能不是 Ge 装的")
+
     def install_vanilla(self, version_id: str) -> None:
         window = self.open_log_window(version_id)
+        window.start_session(f"安装原版 {version_id}")
         window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
+        window.append(f"[LAUNCHER] 下载源：{self.config.download_source}")
         window.set_status(f"安装 {version_id}…")
+        fetcher = self.make_fetcher()
 
         def progress(stage: str, done: int, total: int, message: str) -> None:
             self.messages.put(("log", version_id, f"[{stage}] {message}"))
@@ -377,7 +417,9 @@ class LauncherApp:
 
         def work() -> None:
             try:
-                report = install_version(self.layout, version_id, progress=progress)
+                report = install_version(
+                    self.layout, version_id, progress=progress, fetcher=fetcher
+                )
                 if report.downloads.failures:
                     self.messages.put(
                         ("log", version_id, f"[ERROR] {len(report.downloads.failures)} 个文件失败")
@@ -528,6 +570,9 @@ class LauncherApp:
                 elif kind == "refresh":
                     target = message[1] if len(message) > 1 else None
                     self.pages["versions"].refresh(target)
+                elif kind == "open_version":
+                    self.show_page("versions")
+                    self.pages["versions"].open(message[1])
                 elif kind == "java_choices":
                     self.detected_javas = list(message[1])
                     for page in self.pages.values():

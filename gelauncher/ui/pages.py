@@ -381,6 +381,10 @@ class VersionsPage(Page):
             buttons, text="给这个版本装 Forge", command=lambda: self._install_loader("forge")
         )
         self.forge_button.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.uninstall_fabric_button = ttk.Button(
+            buttons, text="卸载 Fabric（还原原版）", command=self._uninstall_fabric
+        )
+        self.uninstall_fabric_button.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
     # ---------------------------------------------------------------- 二级页动作
 
@@ -415,13 +419,16 @@ class VersionsPage(Page):
         self.info_vars["库"].set(str(len(version.libraries)))
         self.info_vars["隔离目录"].set(str(self.app.layout.version_dir(version_id)))
         self.detail_status.set(f"Java {version.java_version or '?'}")
-        # 已经是某个加载器的版本：对应按钮就没意义了（点了只会原地重装）
-        is_fabric = version_id.startswith("fabric-loader-")
+        # Fabric 是"装进现有版本"的：装过就禁用安装按钮、放开卸载按钮
+        from gelauncher.core.install_loader import fabric_attached
+
+        has_fabric = fabric_attached(self.app.layout, version_id)
         is_forge = "-forge-" in version_id
         self.fabric_button.configure(
-            state="disabled" if is_fabric else "normal",
-            text="这已经是 Fabric 版本" if is_fabric else "给这个版本装 Fabric",
+            state="disabled" if has_fabric else "normal",
+            text="已装 Fabric" if has_fabric else "给这个版本装 Fabric",
         )
+        self.uninstall_fabric_button.configure(state="normal" if has_fabric else "disabled")
         self.forge_button.configure(
             state="disabled" if is_forge else "normal",
             text="这已经是 Forge 版本" if is_forge else "给这个版本装 Forge",
@@ -510,6 +517,10 @@ class VersionsPage(Page):
     def _install_loader(self, kind: str) -> None:
         if self.current:
             self.app.install_loader(self.app.base_mc_version(self.current), kind)
+
+    def _uninstall_fabric(self) -> None:
+        if self.current:
+            self.app.detach_fabric(self.current)
 
     def _refresh_running_state(self) -> None:
         running = bool(self.current and self.app.is_running(self.current))
@@ -770,6 +781,24 @@ class SettingsPage(Page):
             general, text="默认在启动时打开独立日志窗口", variable=self.log_window_var
         ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
 
+        ttk.Label(general, text="下载源").grid(row=5, column=0, sticky="w", pady=3)
+        from gelauncher.core.net import SOURCE_MODE_LABELS, SOURCE_MODES
+
+        self.source_labels = {SOURCE_MODE_LABELS[mode]: mode for mode in SOURCE_MODES}
+        self.source_var = tk.StringVar()
+        ttk.Combobox(
+            general,
+            textvariable=self.source_var,
+            state="readonly",
+            values=list(self.source_labels),
+        ).grid(row=5, column=1, sticky="ew", pady=3)
+        ttk.Label(
+            general,
+            text="自动 = 官方与镜像并行赛跑，谁快用谁；某个源在某台主机上失败会暂时跳过",
+            foreground="#666",
+            wraplength=520,
+        ).grid(row=6, column=0, columnspan=2, sticky="w")
+
         ttk.Label(general, text="微软 client id").grid(row=3, column=0, sticky="w", pady=3)
         self.client_id_var = tk.StringVar()
         ttk.Entry(general, textvariable=self.client_id_var).grid(
@@ -809,6 +838,11 @@ class SettingsPage(Page):
         self.java_var.set(config.java_path)
         self.log_window_var.set(bool(config.show_log_window))
         self.client_id_var.set(config.msa_client_id)
+        label = next(
+            (text for text, mode in self.source_labels.items() if mode == config.download_source),
+            next(iter(self.source_labels)),
+        )
+        self.source_var.set(label)
         self.refresh_java_choices()
         env = current_env()
         self.env_var.set(f"系统：{env.os_name} / {env.arch}   游戏目录：{self.app.layout.root}")
@@ -856,5 +890,6 @@ class SettingsPage(Page):
         config.java_path = self.java_var.get().strip()
         config.show_log_window = bool(self.log_window_var.get())
         config.msa_client_id = self.client_id_var.get().strip()
+        config.download_source = self.source_labels.get(self.source_var.get(), "auto")
         config.save()
         self.app.set_status("设置已保存")

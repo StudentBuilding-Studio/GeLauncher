@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -61,7 +61,7 @@ def manifest_url(sources: Iterable[Source] | None = None) -> str:
 
 
 def fetch_manifest(fetcher: Fetcher) -> dict:
-    raw = fetcher.get_bytes(MANIFEST_URL, label="version_manifest_v2.json")
+    raw = fetcher.get_bytes(MANIFEST_URL, label="version_manifest_v2.json", ttl=600)
     try:
         return json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError as exc:
@@ -184,6 +184,8 @@ def install_version(
 ) -> InstallReport:
     """安装一个原版版本。返回报告，失败信息在 ``report.downloads.failures``。"""
     fetcher = fetcher or Fetcher(sources=tuple(sources) if sources else DEFAULT_SOURCES)
+    if fetcher.cache_dir is None:
+        fetcher = replace(fetcher, cache_dir=layout.root / "launcher" / "cache" / "meta")
     env = env or Environment()
     report = InstallReport(version_id=version_id)
 

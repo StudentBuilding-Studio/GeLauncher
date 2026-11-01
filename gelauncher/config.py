@@ -70,6 +70,8 @@ class Config:
     width: int | None = None
     height: int | None = None
     show_log_window: bool = True
+    #: 下载源："auto" / "official" / "mirror"
+    download_source: str = "auto"
     #: 主窗口最后的位置/尺寸（"1040x680+100+50"）
     window_geometry: str = ""
 
@@ -158,6 +160,9 @@ class Config:
             # 兜底：单租户应用可以在这里直接填租户 id；其它乱值回落到 consumers
             value = (self.msa_authority or "").strip()
             self.msa_authority = value if _looks_like_guid(value) else "consumers"
+
+        if self.download_source not in ("auto", "official", "mirror"):
+            self.download_source = "auto"
 
         # 目录列表：统一分隔符、去重，并保证当前目录排在最前面
         dirs = [d for d in (self.game_dirs or []) if isinstance(d, str) and d.strip()]

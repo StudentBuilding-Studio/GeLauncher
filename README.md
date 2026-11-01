@@ -10,7 +10,10 @@
 
 - **启动**：解析版本 JSON、合并 `inheritsFrom`、按规则过滤库、解压 natives、拼 `java` 命令行
 - **安装原版**：官方 version_manifest → 版本 JSON → 库 / assets / 客户端 jar，全程 sha1 校验，多源自动切换
-- **安装加载器**：Fabric（meta profile，秒级）、Forge（官方 installer，1.12.2+）
+- **安装加载器**：
+  - **Fabric 装进现有版本**（和 HMCL 一样，不新建版本目录）：直接给 `1.21.8` 装，
+    版本名不变，启动它就是 Fabric；原版 JSON 会备份成 `<id>.json.vanilla-backup`，可随时卸载还原
+  - **Forge** 走官方 installer，会生成一个单独的新版本目录（`<mc>-forge-<ver>`）
 - **账号**：离线账号 + 微软账号（设备代码流登录，token 过期自动刷新）
 - **界面**：版本 / 账号 / 设置三个一级页面，每个版本有独立设置（内存、Java、分辨率、日志窗口）
 - **日志**：每个游戏进程一个独立日志窗口，可自动滚动 / 清空 / 保存

@@ -72,6 +72,16 @@ class LogWindow(tk.Toplevel):
 
     # ------------------------------------------------------------------
 
+    def start_session(self, label: str) -> None:
+        """每次新操作打一条醒目的分隔线。
+
+        之前踩过坑：日志窗口按版本复用，旧内容里留着一句"装好了"，
+        新的安装卡在前面时，用户会以为这次也成功了。
+        """
+        stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.append("")
+        self.append("=" * 24 + f" {stamp}  {label} " + "=" * 24)
+
     def append(self, line: str) -> None:
         tag = "INFO"
         for name in ("ERROR", "WARN", "LAUNCHER"):

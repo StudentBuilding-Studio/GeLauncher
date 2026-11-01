@@ -57,6 +57,13 @@ def _notify(hook: ProgressHook | None, stage: str, message: str) -> None:
         hook(stage, message)
 
 
+def _ensure_cache(fetcher: Fetcher, layout: GameLayout) -> Fetcher:
+    """元数据走磁盘缓存（HMCL 的 cache repository 思路），重复安装基本不花时间。"""
+    if fetcher.cache_dir is not None:
+        return fetcher
+    return replace(fetcher, cache_dir=layout.root / "launcher" / "cache" / "meta")
+
+
 def _prefer_mirror(fetcher: Fetcher) -> Fetcher:
     """加载器相关的下载多给几次重试。
 
@@ -75,7 +82,7 @@ def _prefer_mirror(fetcher: Fetcher) -> Fetcher:
 def fabric_loader_versions(fetcher: Fetcher, mc_version: str) -> list[str]:
     """某个 MC 版本可用的 fabric-loader 版本，最新在前。"""
     url = f"{FABRIC_META}/versions/loader/{mc_version}"
-    raw = fetcher.get_bytes(url, label=f"fabric loader 列表（{mc_version}）")
+    raw = fetcher.get_bytes(url, label=f"fabric loader 列表（{mc_version}）", ttl=600)
     try:
         data = json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError as exc:
@@ -104,7 +111,7 @@ def latest_fabric_loader(fetcher: Fetcher, mc_version: str) -> str:
 
 def latest_fabric_installer(fetcher: Fetcher) -> tuple[str, str]:
     """返回 (installer 版本, 下载地址)。只在显式要求用 installer 时才需要。"""
-    raw = fetcher.get_bytes(f"{FABRIC_META}/versions/installer", label="fabric installer 列表")
+    raw = fetcher.get_bytes(f"{FABRIC_META}/versions/installer", label="fabric installer 列表", ttl=600)
     data = json.loads(raw.decode("utf-8"))
     if not data:
         raise LoaderInstallError("Fabric meta 没有返回任何 installer 版本")
@@ -118,7 +125,7 @@ def latest_fabric_installer(fetcher: Fetcher) -> tuple[str, str]:
 
 
 def forge_promotions(fetcher: Fetcher) -> dict[str, str]:
-    raw = fetcher.get_bytes(FORGE_PROMOTIONS, label="Forge promotions")
+    raw = fetcher.get_bytes(FORGE_PROMOTIONS, label="Forge promotions", ttl=600)
     return json.loads(raw.decode("utf-8")).get("promos", {})
 
 
@@ -135,7 +142,7 @@ def forge_versions_from_mirror(fetcher: Fetcher, mc_version: str) -> list[str]:
     """BMCLAPI 的 ``/forge/minecraft/<mc>`` 接口（实测 200，比 files.minecraftforge.net 可靠）。"""
     raw = fetcher.get_bytes(
         f"https://bmclapi2.bangbang93.com/forge/minecraft/{mc_version}",
-        label=f"Forge 版本列表（{mc_version}）",
+        label=f"Forge 版本列表（{mc_version}）", ttl=600,
     )
     data = json.loads(raw.decode("utf-8"))
     versions = [str(entry.get("version")) for entry in data if entry.get("version")]
@@ -146,7 +153,7 @@ def forge_versions_from_maven(fetcher: Fetcher, mc_version: str) -> list[str]:
     """最后兜底：从 maven-metadata.xml 里筛 ``<mc>-<ver>``。"""
     raw = fetcher.get_bytes(
         f"{FORGE_MAVEN}/net/minecraftforge/forge/maven-metadata.xml",
-        label="Forge maven-metadata",
+        label="Forge maven-metadata", ttl=600,
     )
     text = raw.decode("utf-8", "replace")
     import re
@@ -221,7 +228,7 @@ def forge_version_id(mc_version: str, forge_version: str) -> str:
 
 def fetch_fabric_profile(fetcher: Fetcher, mc_version: str, loader_version: str) -> dict:
     url = f"{FABRIC_META}/versions/loader/{mc_version}/{loader_version}/profile/json"
-    raw = fetcher.get_bytes(url, label=f"fabric profile（{mc_version}/{loader_version}）")
+    raw = fetcher.get_bytes(url, label=f"fabric profile（{mc_version}/{loader_version}）", ttl=3600)
     try:
         return json.loads(raw.decode("utf-8"))
     except json.JSONDecodeError as exc:
@@ -245,6 +252,7 @@ def install_fabric(
     ``use_installer=True`` 时才真的去跑 fabric-installer。
     """
     fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
+    fetcher = _ensure_cache(fetcher, layout)
     require_vanilla(layout, mc_version)
     env = env or Environment()
 
@@ -298,6 +306,151 @@ def install_fabric(
     verify_installed(layout, version_id, mc_version)
     _notify(progress, "done", f"装好了：{version_id}")
     return LoaderReport(version_id=version_id, loader="fabric", downloads=report)
+
+
+# --------------------------------------------------------------------------- #
+# Fabric：装进现有版本（和 HMCL 一样，不新建版本目录）
+# --------------------------------------------------------------------------- #
+
+FABRIC_BACKUP_SUFFIX = ".vanilla-backup"
+
+
+def fabric_attached(layout: GameLayout, version_id: str) -> bool:
+    """这个版本是不是已经被"装上 Fabric"了。"""
+    try:
+        version = layout.load_json(version_id)
+    except VersionJsonError:
+        return False
+    return bool(version.main_class and "fabric" in version.main_class.lower())
+
+
+def _maven_key(name: str) -> str:
+    """group:artifact[:classifier]，用来做合并去重（不含版本号）。"""
+    body = name.split("@", 1)[0]
+    parts = body.split(":")
+    if len(parts) >= 4:
+        return f"{parts[0]}:{parts[1]}:{parts[3]}"
+    return f"{body.split(':')[0]}:{body.split(':')[1]}" if ":" in body else body
+
+
+def _fabric_library_entry(entry: dict) -> dict:
+    """给 Fabric 的库补上 downloads.artifact，别的启动器也能直接用。"""
+    from .libraries import LibraryError, MavenCoordinate
+
+    name = str(entry.get("name") or "")
+    result = dict(entry)
+    try:
+        coordinate = MavenCoordinate.parse(name)
+    except LibraryError:
+        return result
+    base = str(entry.get("url") or FABRIC_MAVEN).rstrip("/") + "/"
+    path = coordinate.path
+    result.setdefault("downloads", {})
+    result["downloads"] = {
+        "artifact": {"path": path, "url": base + path}
+    }
+    return result
+
+
+def attach_fabric(
+    layout: GameLayout,
+    mc_version: str,
+    *,
+    loader_version: str | None = None,
+    fetcher: Fetcher | None = None,
+    progress: ProgressHook | None = None,
+    env: Environment | None = None,
+) -> LoaderReport:
+    """把 Fabric 合并进现有版本（版本 id 不变，启动它即启动 Fabric）。
+
+    做法：改 ``versions/<id>/<id>.json``，原文件备份成 ``<id>.json.vanilla-backup``；
+    库按 ``group:artifact:classifier`` 去重（Fabric 的 asm 会顶掉原版的老版本），
+    mainClass 换成 Fabric 的 KnotClient。
+    """
+    fetcher = _ensure_cache(_prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES)), layout)
+    require_vanilla(layout, mc_version)
+    env = env or Environment()
+
+    _notify(progress, "resolve", f"查 Fabric loader 版本（MC {mc_version}）…")
+    loader_version = loader_version or latest_fabric_loader(fetcher, mc_version)
+
+    _notify(progress, "profile", f"取 Fabric profile（loader {loader_version}）…")
+    profile = fetch_fabric_profile(fetcher, mc_version, loader_version)
+
+    json_path = layout.version_json_path(mc_version)
+    original_text = json_path.read_text(encoding="utf-8-sig")
+    raw = json.loads(original_text)
+    backup = json_path.with_name(json_path.name + FABRIC_BACKUP_SUFFIX)
+    if not backup.is_file():
+        # 只在第一次装的时候备份，重复安装不会把"已装 Fabric"的状态备份进去
+        backup.write_text(original_text, encoding="utf-8")
+
+    # ---- 合并 libraries（原版在前，Fabric 在后；同名同 classifier 用 Fabric 的）----
+    merged: list[dict] = [dict(item) for item in (raw.get("libraries") or [])]
+    index = {_maven_key(str(item.get("name", ""))): position for position, item in enumerate(merged)}
+    for entry in profile.get("libraries") or []:
+        item = _fabric_library_entry(entry)
+        key = _maven_key(str(item.get("name", "")))
+        if key in index:
+            merged[index[key]] = item
+        else:
+            index[key] = len(merged)
+            merged.append(item)
+
+    raw["libraries"] = merged
+    raw["mainClass"] = profile.get("mainClass") or raw.get("mainClass")
+
+    # ---- 合并 arguments（原版 + Fabric，Fabric 一般只带 game 参数）----
+    base_args = raw.get("arguments") or {}
+    profile_args = profile.get("arguments") or {}
+    merged_args = {}
+    for section in ("jvm", "game"):
+        values = list(base_args.get(section) or [])
+        for item in profile_args.get(section) or []:
+            if item not in values:
+                values.append(item)
+        if values:
+            merged_args[section] = values
+    if merged_args:
+        raw["arguments"] = merged_args
+
+    # 不能自己继承自己
+    raw.pop("inheritsFrom", None)
+    raw.setdefault("id", mc_version)
+    json_path.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # ---- 下载 Fabric 的库 ----
+    merged_version = VersionJson.from_dict(raw, f"merged({mc_version})")
+    jobs = _library_jobs(layout, merged_version, env)
+    _notify(progress, "libraries", f"下载 {len(jobs)} 个库…")
+    done = 0
+
+    def on_done(job: DownloadJob, _report: DownloadReport) -> None:
+        nonlocal done
+        done += 1
+        _notify(progress, "libraries", f"{done}/{len(jobs)} {job.destination.name}")
+
+    report = fetcher.download_all(jobs, on_done=on_done)
+    if not report.ok:
+        raise LoaderInstallError(
+            "库下载失败：\n" + "\n".join(f"  - {n}：{r}" for n, r in report.failures[:10])
+        )
+
+    if not fabric_attached(layout, mc_version):
+        raise LoaderInstallError("写入后 mainClass 里没有 fabric，合并好像失败了")
+    _notify(progress, "done", f"{mc_version} 已装上 Fabric {loader_version}")
+    return LoaderReport(version_id=mc_version, loader="fabric", downloads=report)
+
+
+def detach_fabric(layout: GameLayout, mc_version: str) -> bool:
+    """卸载 Fabric：把版本 JSON 还原成备份。"""
+    json_path = layout.version_json_path(mc_version)
+    backup = json_path.with_name(json_path.name + FABRIC_BACKUP_SUFFIX)
+    if not backup.is_file():
+        return False
+    json_path.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
+    backup.unlink(missing_ok=True)
+    return True
 
 
 def _library_jobs(
@@ -438,6 +591,7 @@ def install_forge(
     use_mirror: bool = True,
 ) -> LoaderReport:
     fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
+    fetcher = _ensure_cache(fetcher, layout)
     require_vanilla(layout, mc_version)
 
     _notify(progress, "resolve", f"查 Forge 版本（MC {mc_version}）…")
