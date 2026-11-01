@@ -1003,6 +1003,30 @@ class SettingsPage(Page):
         )
         self.source_combo.grid(row=3, column=1, sticky="w", pady=6)
 
+        appearance = Card(body, "外观")
+        appearance.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        appearance_form = appearance.body
+        appearance_form.columnconfigure(1, weight=1)
+        label(appearance_form, "主题色").grid(row=0, column=0, sticky="w", pady=6)
+        from gelauncher.ui import theme as theme_module
+
+        self.appearance_labels = dict(theme_module.MODE_LABELS)
+        self.appearance_var = tk.StringVar(
+            value=next(
+                text
+                for text, mode in self.appearance_labels.items()
+                if mode == self.app.config.appearance
+            )
+        )
+        self.appearance_combo = Combo(
+            appearance_form,
+            variable=self.appearance_var,
+            values=list(self.appearance_labels),
+            width=180,
+            command=self._apply_appearance,
+        )
+        self.appearance_combo.grid(row=0, column=1, sticky="w", pady=6)
+
         env = Card(body, "环境")
         env.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         self.env_var = tk.StringVar(value="")
@@ -1049,6 +1073,15 @@ class SettingsPage(Page):
             next(iter(self.source_labels)),
         )
         self.source_var.set(source)
+        appearance = next(
+            (
+                text
+                for text, mode in self.appearance_labels.items()
+                if mode == config.appearance
+            ),
+            next(iter(self.appearance_labels)),
+        )
+        self.appearance_var.set(appearance)
         self._loading = False
         self.refresh_java_choices()
         env = current_env()
@@ -1099,4 +1132,15 @@ class SettingsPage(Page):
             config.java_path = self.java_var.get().strip()
         config.show_log_window = bool(self.log_window_var.get())
         config.download_source = self.source_labels.get(self.source_var.get(), "auto")
+        config.appearance = self.appearance_labels.get(
+            self.appearance_var.get(), config.appearance
+        )
         config.save()
+
+    def _apply_appearance(self, _value=None) -> None:
+        from gelauncher.ui import theme
+
+        mode = self.appearance_labels.get(self.appearance_var.get(), "system")
+        theme.set_mode(mode)
+        self.app.config.appearance = mode
+        self._schedule_save()

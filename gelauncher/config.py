@@ -76,6 +76,8 @@ class Config:
     curse_api_key: str = ""
     #: 主窗口最后的位置/尺寸（"1040x680+100+50"）
     window_geometry: str = ""
+    #: 外观："system" 跟随系统 / "light" 浅色 / "dark" 深色
+    appearance: str = "system"
 
     # ---- 账号 ----
     accounts: list[str] = field(default_factory=lambda: ["Player"])
@@ -165,6 +167,9 @@ class Config:
 
         if self.download_source not in ("auto", "official", "mirror"):
             self.download_source = "auto"
+
+        if self.appearance not in ("system", "light", "dark"):
+            self.appearance = "system"
 
         # 目录列表：统一分隔符、去重，并保证当前目录排在最前面
         dirs = [d for d in (self.game_dirs or []) if isinstance(d, str) and d.strip()]

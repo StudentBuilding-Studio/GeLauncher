@@ -58,6 +58,7 @@ class LauncherApp:
         from gelauncher.ui import theme
         from gelauncher.ui.dpi import apply_tk_scaling, system_dpi
 
+        theme.set_initial(config.appearance)
         if theme.is_ctk(self.root):
             self.scale = system_dpi() / 96.0
         else:
@@ -126,7 +127,7 @@ class LauncherApp:
                     corner_radius=8,
                     fg_color="transparent",
                     text_color=theme.TEXT,
-                    hover_color="#e2e8f0",
+                    hover_color=("#e2e8f0", "#2a2f37"),
                     command=lambda name=key: self.show_page(name),
                 )
                 button.grid(row=index, column=0, sticky="ew", padx=8, pady=2)
@@ -143,7 +144,7 @@ class LauncherApp:
             self.status_label.grid(
                 row=len(NAV_ITEMS) + 2, column=0, sticky="ew", padx=10, pady=(0, 10)
             )
-            self.content = ctk.CTkFrame(self.root, corner_radius=0, fg_color="#ebebeb")
+            self.content = ctk.CTkFrame(self.root, corner_radius=0, fg_color=theme.BG)
         else:
             sidebar = ttk.Frame(self.root, padding=(10, 12, 6, 8), width=150)
             sidebar.grid(row=0, column=0, sticky="ns")
@@ -1073,6 +1074,7 @@ def run_ui(config: Config | None = None) -> int:
 
     enable_dpi_awareness()
     config = config or Config.load()
+    theme.set_initial(config.appearance)
     root = theme.make_root()
     app = LauncherApp(root, config)
     try:

@@ -16,16 +16,6 @@ from tkinter import ttk
 
 from . import theme
 
-ROW_BG = "#ffffff"
-ROW_ALT = "#fbfcfe"
-ROW_HOVER = "#f1f5f9"
-ROW_SELECTED = "#dbeafe"
-ROW_TEXT = "#1a1a1a"
-MUTED = "#6b7280"
-BORDER = "#e5e7eb"
-
-HEADER_BG = "#ebebeb"
-CANVAS_BG = "#ebebeb"
 
 
 class InstanceList(tk.Frame):
@@ -45,7 +35,7 @@ class InstanceList(tk.Frame):
     ) -> None:
         kwargs.pop("fg_color", None)
         kwargs.pop("corner_radius", None)
-        super().__init__(master, bg=CANVAS_BG, highlightthickness=0, bd=0, **kwargs)
+        super().__init__(master, bg=theme.bg(), highlightthickness=0, bd=0, **kwargs)
         self.columns = tuple(columns)
         self.headers = tuple(headers) or ("",)
         self.on_row = on_row
@@ -69,7 +59,7 @@ class InstanceList(tk.Frame):
             self,
             width=10,
             height=int(34 * self.scale),
-            bg=HEADER_BG,
+            bg=theme.bg(),
             highlightthickness=0,
             bd=0,
         )
@@ -78,7 +68,7 @@ class InstanceList(tk.Frame):
         self._body = tk.Canvas(
             self,
             width=10,
-            bg=CANVAS_BG,
+            bg=theme.bg(),
             highlightthickness=0,
             bd=0,
             yscrollincrement=1,
@@ -99,6 +89,21 @@ class InstanceList(tk.Frame):
         self._body.bind("<Button-1>", self._on_click)
         self._body.bind("<Double-1>", self._on_double)
         self._header.bind("<Configure>", lambda _e: self.after(30, self._draw_header))
+        self._theme_callback = self._on_theme_change
+        theme.on_change(self._theme_callback)
+
+    def destroy(self) -> None:
+        theme.off_change(getattr(self, "_theme_callback", None))
+        super().destroy()
+
+    def _on_theme_change(self) -> None:
+        try:
+            self.configure(bg=theme.bg())
+            self._header.configure(bg=theme.bg())
+            self._body.configure(bg=theme.bg())
+        except tk.TclError:
+            return
+        self._schedule_redraw()
 
     # ------------------------------------------------------------------ Treeview 兼容 API
 
@@ -188,18 +193,18 @@ class InstanceList(tk.Frame):
         canvas.delete("row")
         y = 0
         for index, (iid, data) in enumerate(self._items.items()):
-            bg = ROW_BG if index % 2 == 0 else ROW_ALT
+            bg = theme.color(theme.ROW_BG if index % 2 == 0 else theme.ROW_ALT)
             if iid == self._selected:
-                bg = ROW_SELECTED
+                bg = theme.color(theme.ROW_SELECTED)
             elif iid == self._hover:
-                bg = ROW_HOVER
+                bg = theme.color(theme.ROW_HOVER)
             canvas.create_rectangle(
                 4,
                 y + 2,
                 width - 4,
                 y + self.row_height - 2,
                 fill=bg,
-                outline=BORDER,
+                outline=theme.border(),
                 tags=("row",),
             )
             self._draw_row_text(data, 14, y, width)
@@ -255,7 +260,7 @@ class InstanceList(tk.Frame):
             middle,
             text=self._fit_text(str(data["text"]), self._font_name, max(name_limit, 40)),
             anchor="w",
-            fill=ROW_TEXT,
+            fill=theme.text_color(),
             font=self._font_name,
             tags=("row",),
         )
@@ -266,7 +271,7 @@ class InstanceList(tk.Frame):
                 middle,
                 text=self._fit_text(str(value), self._font_value, max(slot_width - 10, 30)),
                 anchor="center",
-                fill=MUTED,
+                fill=theme.muted(),
                 font=self._font_value,
                 tags=("row",),
             )
@@ -276,7 +281,7 @@ class InstanceList(tk.Frame):
         width = width or max(canvas.winfo_width(), 10)
         canvas.delete("all")
         canvas.create_rectangle(
-            0, 0, width, canvas.winfo_height(), fill=HEADER_BG, outline=HEADER_BG
+            0, 0, width, canvas.winfo_height(), fill=theme.bg(), outline=theme.bg()
         )
         middle = canvas.winfo_height() // 2
         canvas.create_text(
@@ -284,7 +289,7 @@ class InstanceList(tk.Frame):
             middle,
             text=self.headers[0] if self.headers else "",
             anchor="w",
-            fill=MUTED,
+            fill=theme.muted(),
             font=self._font_header,
         )
         slots = max(len(self.column_widths) - 1, 0)
@@ -296,7 +301,7 @@ class InstanceList(tk.Frame):
                 middle,
                 text=self._fit_text(title, self._font_header, max(slot_width - 8, 30)),
                 anchor="center",
-                fill=MUTED,
+                fill=theme.muted(),
                 font=self._font_header,
             )
 
