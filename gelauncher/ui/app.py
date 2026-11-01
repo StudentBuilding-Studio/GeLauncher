@@ -496,6 +496,44 @@ class LauncherApp:
         self._start_job(work)
         return None
 
+    def repair_instance(self, instance: str) -> None:
+        """补全实例缺的文件（黑屏/缺贴图/没声音基本都是这个原因）。"""
+        from gelauncher.core.repair import RepairError, repair_instance
+
+        window = self.open_log_window(instance)
+        window.start_session(f"补全 {instance} 缺的文件")
+        window.append(f"[LAUNCHER] 游戏目录：{self.layout.root}")
+        window.set_status("检查缺什么…")
+        fetcher = self.make_fetcher()
+
+        def progress(stage: str, message: str) -> None:
+            self.messages.put(("log", instance, f"[{stage}] {message}"))
+
+        def work() -> None:
+            try:
+                report = repair_instance(
+                    self.layout, instance, fetcher=fetcher, progress=progress
+                )
+                self.messages.put(
+                    (
+                        "log",
+                        instance,
+                        f"[LAUNCHER] 补全完成：下载 {report.downloads.downloaded} 个，"
+                        f"已存在 {report.downloads.skipped} 个",
+                    )
+                )
+                self.messages.put(("status", f"{instance} 文件已补全"))
+            except RepairError as exc:
+                self.messages.put(("log", instance, f"[LAUNCHER] {exc}"))
+                self.messages.put(("status", str(exc)))
+            except Exception as exc:  # noqa: BLE001
+                self.messages.put(("log", instance, f"[ERROR] 补全失败：{exc}"))
+                self.messages.put(("error", f"补全失败：{exc}"))
+            finally:
+                self.messages.put(("idle", None))
+
+        self._start_job(work)
+
     def switch_game_dir(self, path: str) -> None:
         """切换/添加游戏目录（版本页左侧目录列表也走这里）。"""
         self.config.add_game_dir(path)

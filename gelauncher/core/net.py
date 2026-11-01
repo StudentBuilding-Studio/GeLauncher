@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import concurrent.futures
 import hashlib
+import http.client
+import io
 import os
 import shutil
 import socket
@@ -99,6 +101,21 @@ def sources_for(mode: str) -> tuple[Source, ...]:
     return DEFAULT_SOURCES
 
 
+def for_bulk_assets(fetcher: "Fetcher") -> "Fetcher":
+    """下载几千个资源小文件时用的下载器：镜像优先、关掉赛跑。
+
+    资源文件每个只有几 KB，赛跑意味着每个文件都多一条连接；
+    BMCLAPI 在这种高频并发下会握手超时。镜像优先 + keep-alive 才能跑满。
+    用户显式选了"仅官方"时保持原样。
+    """
+    from dataclasses import replace as _replace
+
+    if len(fetcher.sources) <= 1:
+        return _replace(fetcher, race=False)
+    # 约定：镜像排在官方后面；资源文件优先走镜像
+    return _replace(fetcher, sources=tuple(reversed(fetcher.sources)), race=False)
+
+
 @dataclass
 class DownloadJob:
     """一个待下载文件。``urls`` 已经按源的优先级排好序。"""
@@ -159,9 +176,132 @@ def _ssl_context(insecure: bool) -> ssl.SSLContext:
     return ssl.create_default_context()
 
 
+_SSL_SECURE = _ssl_context(False)
+_SSL_INSECURE = _ssl_context(True)
+
+#: 每个线程一套 keep-alive 连接（和 HMCL 的 HTTP 客户端一样复用 TLS）
+_CONN_LOCAL = threading.local()
+
+
+class _KeepAliveResponse:
+    """把 http.client 的响应包一层，让调用方可以照旧 ``with _open(...) as r``。"""
+
+    def __init__(self, connection: http.client.HTTPConnection, response: http.client.HTTPResponse):
+        self._connection = connection
+        self._response = response
+        self.status = response.status
+        self.headers = response.headers
+
+    def read(self, amount: int | None = None):
+        try:
+            return self._response.read(amount)
+        except (http.client.HTTPException, OSError):
+            _drop_connection(self._connection)
+            raise
+
+    def close(self) -> None:
+        try:
+            # 没读完的 body 不排空的话，这条连接不能复用
+            if not self._response.isclosed():
+                self._response.read()
+        except (http.client.HTTPException, OSError):
+            _drop_connection(self._connection)
+
+    def __enter__(self) -> "_KeepAliveResponse":
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+
+def _connections() -> dict[tuple[str, int, bool], http.client.HTTPConnection]:
+    pool = getattr(_CONN_LOCAL, "pool", None)
+    if pool is None:
+        pool = {}
+        _CONN_LOCAL.pool = pool
+    return pool
+
+
+def _drop_connection(connection: http.client.HTTPConnection) -> None:
+    pool = _connections()
+    for key, value in list(pool.items()):
+        if value is connection:
+            pool.pop(key, None)
+            break
+    try:
+        connection.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _connection(
+    scheme: str, host: str, port: int, timeout: float, insecure: bool
+) -> http.client.HTTPConnection:
+    key = (host, port, insecure)
+    pool = _connections()
+    connection = pool.get(key)
+    if connection is not None and connection.sock is None:
+        # 服务端已经关了（Connection: close），重新建一条
+        pool.pop(key, None)
+        connection = None
+    if connection is None:
+        if scheme == "https":
+            connection = http.client.HTTPSConnection(
+                host, port, timeout=timeout, context=_SSL_INSECURE if insecure else _SSL_SECURE
+            )
+        else:
+            connection = http.client.HTTPConnection(host, port, timeout=timeout)
+        pool[key] = connection
+    else:
+        connection.timeout = timeout
+    return connection
+
+
 def _open(url: str, timeout: float, insecure: bool):
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-    return urllib.request.urlopen(request, timeout=timeout, context=_ssl_context(insecure))
+    """GET 一个 URL，尽量复用已有连接（每个线程、每台主机一条）。"""
+    current = url
+    for _ in range(6):
+        parts = urllib.parse.urlsplit(current)
+        scheme = parts.scheme.lower()
+        host = parts.hostname or ""
+        port = parts.port or (443 if scheme == "https" else 80)
+        connection = _connection(scheme, host, port, timeout, insecure)
+        path = parts.path or "/"
+        if parts.query:
+            path += "?" + parts.query
+        try:
+            connection.request(
+                "GET", path, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}
+            )
+            response = connection.getresponse()
+        except Exception:
+            _drop_connection(connection)
+            raise
+
+        if response.status in (301, 302, 303, 307, 308):
+            location = response.getheader("Location")
+            try:
+                response.read()
+            except (http.client.HTTPException, OSError):
+                _drop_connection(connection)
+            if not location:
+                return _KeepAliveResponse(connection, response)
+            current = urllib.parse.urljoin(current, location)
+            continue
+
+        if response.status >= 400:
+            try:
+                body = response.read()
+            except (http.client.HTTPException, OSError):
+                body = b""
+                _drop_connection(connection)
+            raise urllib.error.HTTPError(
+                current, response.status, response.reason, response.headers, io.BytesIO(body)
+            )
+
+        return _KeepAliveResponse(connection, response)
+
+    raise DownloadError(f"重定向次数过多：{url}")
 
 
 def _is_cert_error(exc: BaseException) -> bool:
@@ -196,6 +336,25 @@ _HEALTH: dict[tuple[str, str], tuple[bool, float]] = {}
 HEALTH_OK_TTL = 600.0     # 10 分钟内认为"这个源在这台主机上是好的"
 HEALTH_BAD_TTL = 180.0    # 3 分钟内不再优先用
 
+_DEAD_LOCK = threading.Lock()
+#: (source.name, host) → 错误信息；进程级，跨 Fetcher 共享
+_DEAD: dict[tuple[str, str], str] = {}
+
+
+def _dead_get(key: tuple[str, str]) -> str | None:
+    with _DEAD_LOCK:
+        return _DEAD.get(key)
+
+
+def _dead_set(key: tuple[str, str], reason: str) -> None:
+    with _DEAD_LOCK:
+        _DEAD[key] = reason
+
+
+def _dead_all() -> dict[tuple[str, str], str]:
+    with _DEAD_LOCK:
+        return dict(_DEAD)
+
 
 def _health_get(key: tuple[str, str]) -> bool | None:
     with _HEALTH_LOCK:
@@ -228,9 +387,11 @@ def _health_set(key: tuple[str, str], ok: bool) -> None:
 
 
 def reset_health_cache() -> None:
-    """测试用：清掉进程级健康度缓存。"""
+    """测试用：清掉进程级健康度 / 死亡记录缓存。"""
     with _HEALTH_LOCK:
         _HEALTH.clear()
+    with _DEAD_LOCK:
+        _DEAD.clear()
 
 
 @dataclass
@@ -257,8 +418,6 @@ class Fetcher:
     #: 元数据磁盘缓存目录（None 表示不缓存）
     cache_dir: Path | None = None
 
-    #: (source.name, host) → 最后一次传输层错误
-    _dead: dict[tuple[str, str], str] = field(default_factory=dict, repr=False)
     _good_source: str | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
@@ -311,8 +470,8 @@ class Fetcher:
         scored: list[tuple[int, int, Source]] = []
         skipped: list[Source] = []
         for index, source in enumerate(self.sources):
-            key = (source.name, host)
-            if key in self._dead:
+            host_key = (source.name, host)
+            if _dead_get(host_key):
                 skipped.append(source)
                 continue
             # 赛跑模式不做可达性探测：探测本身要等 5 秒（官方 maven 就是死在这里），
@@ -320,8 +479,8 @@ class Fetcher:
             if not self.race and not self._probe(source, url):
                 skipped.append(source)
                 continue
-            ok_at = _health_ok_at(key)
-            tried = _health_get(key)
+            ok_at = _health_ok_at(host_key)
+            tried = _health_get(host_key)
             if ok_at is not None:
                 rank = 0          # 最近成功过
             elif tried is None:
@@ -341,12 +500,13 @@ class Fetcher:
     def _note_failure(self, source: Source, url: str, exc: BaseException) -> None:
         if not _is_transport_error(exc):
             return
-        _health_set((source.name, self._host_of(url)), False)
-        with self._lock:
-            self._dead[(source.name, self._host_of(url))] = f"{type(exc).__name__}: {exc}"
+        host = self._host_of(url)
+        _health_set((source.name, host), False)
+        _dead_set((source.name, host), f"{type(exc).__name__}: {exc}")
+
     def dead_sources(self) -> dict[tuple[str, str], str]:
-        with self._lock:
-            return dict(self._dead)
+        names = {source.name for source in self.sources}
+        return {key: reason for key, reason in _dead_all().items() if key[0] in names}
 
     # ------------------------------------------------------------------ 小文件
 
@@ -356,18 +516,18 @@ class Fetcher:
             try:
                 with _open(candidate, self.timeout, False) as response:
                     data = response.read()
-                self._note_success(source, candidate)
+                self._note_success(source, url)
                 return data
             except Exception as exc:  # noqa: BLE001 - 要按错误类型分类处理
-                self._note_failure(source, candidate, exc)
+                self._note_failure(source, url, exc)
                 if _is_cert_error(exc) and source.allow_insecure_tls:
                     try:
                         with _open(candidate, self.timeout, True) as response:
                             data = response.read()
-                        self._note_success(source, candidate)
+                        self._note_success(source, url)
                         return data
                     except Exception as inner:  # noqa: BLE001
-                        self._note_failure(source, candidate, inner)
+                        self._note_failure(source, url, inner)
                         exc = inner
                 if attempt == self.retries - 1:
                     errors.append(f"{source.name} {candidate} → {exc}")
@@ -490,11 +650,11 @@ class Fetcher:
                             os.replace(part, destination)
                             report.downloaded = 1
                             report.bytes_written = written
-                            self._note_success(source, url)
+                            self._note_success(source, job_url)
                             return report
                         except Exception as exc:  # noqa: BLE001
                             part.unlink(missing_ok=True)
-                            self._note_failure(source, url, exc)
+                            self._note_failure(source, job_url, exc)
                             if attempt == self.retries - 1:
                                 errors.append(f"{source.name} {url} → {exc}")
                             time.sleep(min(2**attempt * 0.5, 4))
@@ -508,73 +668,57 @@ class Fetcher:
         destination: Path,
         candidates: Sequence[tuple[str, Source]],
     ) -> DownloadReport | None:
-        """多个候选 URL 同时下载同一个文件，第一个校验通过的直接采用。
+        """多个候选 URL 同时下载同一个文件，第一个校验通过的采用。
 
-        每个候选写自己的 ``.part``，赢家先 os.replace；其余线程看到
-        ``winner`` 事件后放弃写盘并清理自己的临时文件。
+        每个候选写自己的 ``.part``，只有校验通过后才去抢 ``os.replace``；
+        抢输的（或失败的）自己清理临时文件。这里不用"取消事件"互相打断，
+        免得把内部异常混进真正的错误列表。
         """
-        winner = threading.Event()
-        winner_source: list[Source] = []
-        winner_url: list[str] = []
         errors: list[str] = []
         lock = threading.Lock()
+        winners: list[tuple[Source, str, int]] = []
 
         def attempt(candidate: tuple[str, Source]) -> bool:
             job_url, source = candidate
             url = source.rewrite(job_url)
             part = destination.with_name(f"{destination.name}.{abs(hash((source.name, url)))}.part")
             part.unlink(missing_ok=True)
-            replaced = False
             try:
-                if winner.is_set():
-                    return False
-                written = self._stream_to(
-                    url, part, job, source, should_stop=winner.is_set
-                )
-                if winner.is_set():
-                    return False
+                written = self._stream_to(url, part, job, source)
                 if not verify(part, job.sha1, job.size):
                     raise DownloadError("校验失败（sha1 不匹配）")
-                if winner.is_set():
-                    return False
-                winner.set()
-                os.replace(part, destination)
-                replaced = True
                 with lock:
-                    winner_source.append(source)
-                    winner_url.append(url)
+                    if winners:
+                        part.unlink(missing_ok=True)
+                        return False
+                    try:
+                        os.replace(part, destination)
+                    except OSError:
+                        part.unlink(missing_ok=True)
+                        raise
+                    winners.append((source, job_url, written))
                 return True
             except Exception as exc:  # noqa: BLE001
+                part.unlink(missing_ok=True)
                 with lock:
                     errors.append(f"{source.name} {url} → {exc}")
-                self._note_failure(source, url, exc)
+                self._note_failure(source, job_url, exc)
                 return False
-            finally:
-                # 输家（以及中途放弃的）都要清掉自己的临时文件
-                if not replaced:
-                    part.unlink(missing_ok=True)
 
         pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(candidates))
         futures = [pool.submit(attempt, candidate) for candidate in candidates]
         try:
-            for future in concurrent.futures.as_completed(futures):
-                try:
-                    if future.result():
-                        for other in futures:
-                            other.cancel()
-                        # 等一下输家退出，保证不留下 .part 文件
-                        concurrent.futures.wait(futures, timeout=3)
-                        if winner_source:
-                            self._note_success(winner_source[0], winner_url[0])
-                        report = DownloadReport()
-                        report.downloaded = 1
-                        report.bytes_written = destination.stat().st_size if destination.exists() else 0
-                        return report
-                except Exception:  # noqa: BLE001
-                    continue
+            concurrent.futures.wait(futures)
         finally:
             pool.shutdown(wait=False)
 
+        if winners:
+            source, job_url, written = winners[0]
+            self._note_success(source, job_url)
+            report = DownloadReport()
+            report.downloaded = 1
+            report.bytes_written = written
+            return report
         if errors:
             report = DownloadReport()
             report.failures.append((job.describe(), " | ".join(errors)))

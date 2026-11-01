@@ -18,7 +18,7 @@ from typing import Callable, Iterable
 from . import libraries
 from .layout import GameLayout
 from .models import VersionJson, VersionJsonError
-from .net import DEFAULT_SOURCES, DownloadJob, DownloadReport, Fetcher, Source
+from .net import DEFAULT_SOURCES, DownloadJob, DownloadReport, Fetcher, Source, for_bulk_assets
 from .rules import Environment, allow
 
 MANIFEST_URL = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json"
@@ -312,7 +312,9 @@ def install_version(
                 if done % 50 == 0 or done == total:
                     _notify(progress, "assets", done, total, job.describe())
 
-            report.downloads.merge(fetcher.download_all(jobs, on_done=_asset_done))
+            # 资源文件数量多、单个很小：镜像优先 + 关赛跑 + keep-alive，别每文件都握手
+            asset_fetcher = for_bulk_assets(fetcher)
+            report.downloads.merge(asset_fetcher.download_all(jobs, on_done=_asset_done))
     else:
         report.messages.append("版本 JSON 里没有 assetIndex，跳过资源下载")
 

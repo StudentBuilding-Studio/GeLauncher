@@ -394,7 +394,11 @@ class VersionsPage(Page):
         self.uninstall_loader_button = ttk.Button(
             install_panel, text="卸载加载器", command=self._uninstall_loader
         )
-        self.uninstall_loader_button.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+        self.uninstall_loader_button.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0), padx=(0, 4))
+        self.repair_button = ttk.Button(
+            install_panel, text="补全文件", command=self._repair
+        )
+        self.repair_button.grid(row=1, column=2, sticky="ew", pady=(6, 0), padx=(4, 0))
 
         # 所有设置项都是"改完立即保存"，不再有保存按钮
         self._loading = False
@@ -568,6 +572,10 @@ class VersionsPage(Page):
     def _uninstall_loader(self) -> None:
         if self.current:
             self.app.detach_loader(self.current)
+
+    def _repair(self) -> None:
+        if self.current:
+            self.app.repair_instance(self.current)
 
     def _delete_version(self) -> None:
         if self.current:

@@ -192,6 +192,32 @@ def _launch_account(args: argparse.Namespace, config: Config):
         raise LaunchError(str(exc)) from exc
 
 
+def cmd_repair(args: argparse.Namespace, config: Config) -> int:
+    from .core.repair import RepairError, repair_instance
+
+    layout = _make_layout(args, config)
+    fetcher = _fetcher(args, config)
+    print(f"检查实例「{args.version}」缺什么…")
+    try:
+        report = repair_instance(
+            layout, args.version, fetcher=fetcher, progress=_print_progress
+        )
+    except RepairError as exc:
+        print(f"没得补：{exc}", file=sys.stderr)
+        return 1
+
+    if report.downloads.failures:
+        print(f"还有 {len(report.downloads.failures)} 个文件没补上：", file=sys.stderr)
+        for name, reason in report.downloads.failures[:10]:
+            print(f"  - {name}：{reason}", file=sys.stderr)
+        return 1
+    print(
+        f"补全完成：下载 {report.downloads.downloaded} 个 / 已存在 {report.downloads.skipped} 个，"
+        f"共 {report.downloads.bytes_written / 1024 / 1024:.1f} MB"
+    )
+    return 0
+
+
 def cmd_verify(args: argparse.Namespace, config: Config) -> int:
     """机械验收（方案 §6.4）：进程存活 N 秒 + 游戏日志里出现关键字。"""
     layout = _make_layout(args, config)
@@ -533,6 +559,12 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--game-arg", action="append")
     verify.add_argument("--no-isolate", action="store_true")
     verify.set_defaults(func=cmd_verify)
+
+    repair = sub.add_parser("repair", help="补全实例缺的文件（库 / assets / jar / 日志配置）")
+    _add_common(repair)
+    repair.add_argument("--version-id", dest="version", required=True, help="实例名")
+    repair.add_argument("--threads", type=int, default=8)
+    repair.set_defaults(func=cmd_repair)
 
     install = sub.add_parser("install", help="安装一个原版版本（库 / assets / 客户端 jar）")
     _add_common(install)

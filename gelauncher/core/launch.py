@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import threading
@@ -126,6 +127,27 @@ def _resolve_jar(layout: GameLayout, version: VersionJson, version_id: str) -> P
     return None
 
 
+def _missing_asset_objects(layout: GameLayout, index_path: Path) -> int:
+    """数一下资源索引里有多少对象实际不在磁盘上（黑屏/缺贴图的直接原因）。"""
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        return 0
+    objects = index.get("objects")
+    if not isinstance(objects, dict):
+        return 0
+    missing = 0
+    for entry in objects.values():
+        if not isinstance(entry, dict):
+            continue
+        digest = entry.get("hash")
+        if not isinstance(digest, str) or len(digest) < 2:
+            continue
+        if not layout.asset_object_path(digest).is_file():
+            missing += 1
+    return missing
+
+
 def _missing(paths: Iterable[Path]) -> list[Path]:
     return [path for path in paths if not path.is_file()]
 
@@ -192,6 +214,12 @@ def prepare(options: LaunchOptions) -> LaunchPlan:
             raise LaunchError(
                 f"找不到资源索引：{index_path}\n"
                 "缺少 assets 会导致游戏启动后没有声音/贴图，先用安装功能下载资源。"
+            )
+        missing = _missing_asset_objects(layout, index_path)
+        if missing:
+            warnings.append(
+                f"assets 不完整：{assets_index_name} 缺 {missing} 个文件，"
+                "进游戏可能黑屏/没有贴图或声音（可以用 repair 子命令补全）"
             )
     else:
         assets_index_name = version.assets or "legacy"
