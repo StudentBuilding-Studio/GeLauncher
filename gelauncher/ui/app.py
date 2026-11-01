@@ -199,8 +199,9 @@ class LauncherApp:
         for key, page in self.pages.items():
             active = key == name
             if active:
-                page.grid()
+                # 先更新内容再显示：否则窗口会先闪一下旧列表再刷新
                 page.on_show()
+                page.grid()
             else:
                 page.grid_remove()
             button = self.nav_buttons.get(key)

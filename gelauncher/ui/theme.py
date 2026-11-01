@@ -76,3 +76,19 @@ def style_ttk(root) -> None:
     )
     style.configure("Nav.TButton", anchor="w", padding=(12, 8))
     style.configure("Status.TLabel", background=BG, foreground=MUTED, padding=(4, 4))
+
+
+_SCALE_CACHE: float | None = None
+
+
+def scale_factor() -> float:
+    """DPI 缩放系数（1.0 = 100%），缓存一次。"""
+    global _SCALE_CACHE
+    if _SCALE_CACHE is None:
+        try:
+            from .dpi import system_dpi
+
+            _SCALE_CACHE = max(1.0, system_dpi() / 96.0)
+        except Exception:  # noqa: BLE001
+            _SCALE_CACHE = 1.0
+    return _SCALE_CACHE

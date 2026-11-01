@@ -251,9 +251,13 @@ class VersionsPage(Page):
             return
         ModpackImportDialog(self, self.app, archive, info, self.app.import_modpack)
 
-    def refresh(self, select: str | None = None) -> None:
-        self.tree.delete(*self.tree.get_children())
+    def refresh(self, select: str | None = None, force: bool = True) -> None:
         layout = self.app.layout
+        fingerprint = (str(layout.root), tuple(layout.installed_versions()), self.filter_var.get())
+        if not force and fingerprint == getattr(self, "_fingerprint", None):
+            return
+        self._fingerprint = fingerprint
+        self.tree.delete(*self.tree.get_children())
         self.dir_hint_var.set(f"当前目录：{layout.root}")
         if not layout.root.is_dir():
             self.app.set_status(f"游戏目录不存在：{layout.root}")
@@ -678,7 +682,7 @@ class VersionsPage(Page):
 
     def on_show(self) -> None:
         self.refresh_dirs()
-        self.refresh()
+        self.refresh(force=False)
 
 
 # --------------------------------------------------------------------------- #

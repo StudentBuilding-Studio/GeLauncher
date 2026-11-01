@@ -1,26 +1,36 @@
-"""CustomTkinter 版的"实例列表"。
+"""实例/目录列表：单 Canvas 自绘。
 
-ttk.Treeview 在高 DPI 下要么行高被写死、要么选中样式很土，而且各行的
-上下留白没法统一。这里用 CTkScrolledFrame 自己画行：固定行高、固定间距、
-hover/选中高亮，顺便保留了一小部分 Treeview 的 API（get_children/insert/
-delete/selection…），页面代码基本不用改。
+之前用 CTkScrollableFrame + 每行 4 个 CTkLabel，切页时销毁/重建上百个控件，
+每个 CTk 控件都带 Canvas、字体对象和 <Configure> 回调，导致切页卡顿、闪烁，
+拖动窗口时 CTk 的缩放追踪器还要逐个遍历，更不跟手。
+
+现在整张列表只有一个 Canvas：行是矩形+文字，重绘只清一次 Canvas，
+hover/选中只是改几个 item 的颜色，切换页面基本无感。
 """
 
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
+from tkinter import ttk
 
-import customtkinter as ctk
+from . import theme
 
-LIGHT_TEXT = ("#1a1a1a", "#f2f2f2")
-LIGHT_MUTED = ("#6b7280", "#9aa4b2")
-ROW_BG = ("#ffffff", "#2b2b2b")
-ROW_HOVER = ("#f1f5f9", "#333a44")
-ROW_SELECTED = ("#dbeafe", "#1e3a5f")
-HEADER_TEXT = ("#6b7280", "#9aa4b2")
+ROW_BG = "#ffffff"
+ROW_ALT = "#fbfcfe"
+ROW_HOVER = "#f1f5f9"
+ROW_SELECTED = "#dbeafe"
+ROW_TEXT = "#1a1a1a"
+MUTED = "#6b7280"
+BORDER = "#e5e7eb"
+
+HEADER_BG = "#ebebeb"
+CANVAS_BG = "#ebebeb"
 
 
-class InstanceList(ctk.CTkScrollableFrame):
+class InstanceList(tk.Frame):
+    """行为上像 Treeview，绘制上是一块 Canvas。"""
+
     def __init__(
         self,
         master: tk.Misc,
@@ -32,32 +42,58 @@ class InstanceList(ctk.CTkScrollableFrame):
         row_height: int = 40,
         **kwargs,
     ) -> None:
-        kwargs.setdefault("fg_color", "transparent")
-        kwargs.setdefault("corner_radius", 0)
-        super().__init__(master, **kwargs)
+        kwargs.pop("fg_color", None)
+        kwargs.pop("corner_radius", None)
+        super().__init__(master, bg=CANVAS_BG, highlightthickness=0, bd=0, **kwargs)
         self.columns = tuple(columns)
         self.headers = tuple(headers) or ("",)
         self.on_row = on_row
         self.column_widths = column_widths or (260, 110, 100, 80)
-        self.row_height = row_height
+        self.scale = theme.scale_factor()
+        self.row_height = max(int(row_height * self.scale), 28)
         self._items: dict[str, dict] = {}
-        self._rows: dict[str, ctk.CTkFrame] = {}
         self._selected: str | None = None
+        self._hover: str | None = None
         self._select_callbacks: list = []
-        self.columnconfigure(0, weight=1)
+        self._font_name = tkfont.Font(family="Microsoft YaHei UI", size=12)
+        self._font_value = tkfont.Font(family="Microsoft YaHei UI", size=11)
+        self._font_header = tkfont.Font(family="Microsoft YaHei UI", size=11)
+        self._redraw_job = None
 
-        if self.headers and any(self.headers):
-            header = ctk.CTkFrame(self, fg_color="transparent", corner_radius=0)
-            header.grid(row=0, column=0, sticky="ew", padx=4, pady=(0, 2))
-            self._setup_columns(header)
-            for index, title in enumerate(self.headers):
-                ctk.CTkLabel(
-                    header,
-                    text=title,
-                    anchor="w",
-                    text_color=HEADER_TEXT,
-                    font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
-                ).grid(row=0, column=index, sticky="w", padx=(8, 4))
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+
+        self._header = tk.Canvas(
+            self,
+            height=int(34 * self.scale),
+            bg=HEADER_BG,
+            highlightthickness=0,
+            bd=0,
+        )
+        self._header.grid(row=0, column=0, columnspan=2, sticky="ew")
+
+        self._body = tk.Canvas(
+            self,
+            bg=CANVAS_BG,
+            highlightthickness=0,
+            bd=0,
+            yscrollincrement=1,
+        )
+        self._body.grid(row=1, column=0, sticky="nsew")
+
+        self._scrollbar = ttk.Scrollbar(self, orient="vertical", command=self._body.yview)
+        self._scrollbar.grid(row=1, column=1, sticky="ns")
+        self._body.configure(yscrollcommand=self._scrollbar.set)
+
+        self._last_width = 0
+        self._body.bind("<Configure>", self._on_body_configure)
+        self._body.bind("<MouseWheel>", self._on_wheel)
+        self._body.bind("<Button-4>", lambda _e: self._body.yview_scroll(-3, "units"))
+        self._body.bind("<Button-5>", lambda _e: self._body.yview_scroll(3, "units"))
+        self._body.bind("<Motion>", self._on_motion)
+        self._body.bind("<Leave>", lambda _e: self._set_hover(None))
+        self._body.bind("<Button-1>", self._on_click)
+        self._header.bind("<Configure>", lambda _e: self.after(30, self._draw_header))
 
     # ------------------------------------------------------------------ Treeview 兼容 API
 
@@ -67,8 +103,11 @@ class InstanceList(ctk.CTkScrollableFrame):
     def column(self, *_args, **_kwargs) -> None:
         return None
 
-    def configure(self, *_args, **_kwargs) -> None:
-        return None
+    def configure(self, *_args, **_kwargs):
+        try:
+            return super().configure(*_args, **_kwargs)
+        except tk.TclError:
+            return None
 
     def get_children(self, *_args) -> tuple[str, ...]:
         return tuple(self._items)
@@ -76,8 +115,8 @@ class InstanceList(ctk.CTkScrollableFrame):
     def item(self, iid: str, option: str | None = None):
         data = self._items.get(iid, {"text": "", "values": []})
         if option is None:
-            return dict(data)
-        return data.get(option, "" if option != "values" else [])
+            return {"text": data["text"], "values": list(data["values"])}
+        return data["text"] if option == "text" else list(data["values"])
 
     def selection(self) -> tuple[str, ...]:
         return (self._selected,) if self._selected else ()
@@ -89,12 +128,11 @@ class InstanceList(ctk.CTkScrollableFrame):
     def see(self, iid: str) -> None:
         self.selection_set(iid)
         try:
-            self.update_idletasks()
-            row = self._rows[iid]
-            total = max(row.winfo_height(), 1) * max(len(self._rows), 1)
-            self._parent_canvas.yview_moveto(max(0.0, row.winfo_y() / max(total, 1)))
-        except (KeyError, tk.TclError):
-            pass
+            index = list(self._items).index(iid)
+        except ValueError:
+            return
+        total = max(len(self._items) * self.row_height, 1)
+        self._body.yview_moveto(max(0.0, (index * self.row_height) / total))
 
     def bind(self, sequence: str, func, add=None) -> None:  # noqa: A003
         if sequence == "<<TreeviewSelect>>":
@@ -107,107 +145,171 @@ class InstanceList(ctk.CTkScrollableFrame):
     # ------------------------------------------------------------------ 数据
 
     def insert(self, _parent, _index, *, iid: str, text: str = "", values=(), **_kw) -> None:
-        values = list(values) if values else []
-        self._items[iid] = {"text": text, "values": values}
-        row = ctk.CTkFrame(
-            self,
-            corner_radius=6,
-            fg_color=ROW_BG,
-            height=self.row_height,
-            border_width=0,
-        )
-        row.grid(
-            row=len(self._items),
-            column=0,
-            sticky="ew",
-            padx=4,
-            pady=(0, 3),
-        )
-        row.columnconfigure(0, weight=1)
-        row.grid_propagate(False)
-        self._setup_columns(row)
-
-        title = ctk.CTkLabel(
-            row,
-            text=text,
-            anchor="w",
-            text_color=LIGHT_TEXT,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        )
-        title.grid(row=0, column=0, sticky="ew", padx=(10, 6), pady=6)
-        widgets = [title]
-        for index, value in enumerate(values[: len(self.column_widths) - 1], start=1):
-            label = ctk.CTkLabel(
-                row,
-                text=str(value),
-                anchor="center",
-                text_color=LIGHT_MUTED,
-                font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
-            )
-            label.grid(row=0, column=index, sticky="ew", padx=(4, 6), pady=6)
-            widgets.append(label)
-
-        for widget in (row, *widgets):
-            widget.bind("<Button-1>", lambda _e, key=iid: self._clicked(key))
-        row.bind("<Enter>", lambda _e, key=iid: self._hover(key, True))
-        row.bind("<Leave>", lambda _e, key=iid: self._hover(key, False))
-        self._rows[iid] = row
-        if len(self._items) == 1 and self._selected is None:
-            self.selection_set(iid)
+        self._items[iid] = {
+            "text": text,
+            "values": list(values) if values else [],
+        }
+        if self._selected is None:
+            self._selected = iid
+        self._schedule_redraw()
 
     def delete(self, *iids: str) -> None:
         for iid in iids:
-            row = self._rows.pop(iid, None)
             self._items.pop(iid, None)
-            if row is not None:
-                try:
-                    row.destroy()
-                except tk.TclError:
-                    pass
             if self._selected == iid:
                 self._selected = None
-        for index, iid in enumerate(self._items, start=1):
-            try:
-                self._rows[iid].grid_configure(row=index)
-            except (KeyError, tk.TclError):
-                pass
+            if self._hover == iid:
+                self._hover = None
+        self._schedule_redraw()
 
-    # ------------------------------------------------------------------ 内部
+    # ------------------------------------------------------------------ 绘制
 
-    def _setup_columns(self, frame: ctk.CTkFrame) -> None:
-        frame.columnconfigure(0, weight=1)
-        for index, width in enumerate(self.column_widths[1:], start=1):
-            frame.columnconfigure(index, weight=0, minsize=width)
+    def _schedule_redraw(self) -> None:
+        if self._redraw_job is not None:
+            self.after_cancel(self._redraw_job)
+        self._redraw_job = self.after(20, self._redraw)
 
-    def _clicked(self, iid: str) -> None:
+    def _on_body_configure(self, event) -> None:
+        # 拖动窗口时宽度连续变化，只在跨过阈值时重排，避免每帧重绘
+        if abs(event.width - self._last_width) < 8:
+            return
+        self._last_width = event.width
+        self._schedule_redraw()
+
+    def _redraw(self) -> None:
+        self._redraw_job = None
+        canvas = self._body
+        width = max(canvas.winfo_width(), 10)
+        canvas.delete("row")
+        y = 0
+        for index, (iid, data) in enumerate(self._items.items()):
+            bg = ROW_BG if index % 2 == 0 else ROW_ALT
+            if iid == self._selected:
+                bg = ROW_SELECTED
+            elif iid == self._hover:
+                bg = ROW_HOVER
+            canvas.create_rectangle(
+                4,
+                y + 2,
+                width - 4,
+                y + self.row_height - 2,
+                fill=bg,
+                outline=BORDER,
+                tags=("row",),
+            )
+            self._draw_row_text(data, 14, y, width)
+            y += self.row_height
+        canvas.configure(scrollregion=(0, 0, width, max(y, self.row_height)))
+        self._draw_header(width)
+
+    def _value_centers(self, width: int, slots: int) -> list[int]:
+        widths = list(self.column_widths[1:])[:slots]
+        centers: list[int] = []
+        right = width - 16
+        for slot_width in reversed(widths):
+            right -= slot_width // 2
+            centers.append(right)
+            right -= slot_width // 2
+        centers.reverse()
+        return centers
+
+    def _draw_row_text(self, data: dict, x: int, y: int, width: int) -> None:
+        canvas = self._body
+        middle = y + self.row_height // 2
+        values = data["values"]
+        slots = max(len(self.column_widths) - 1, 0)
+        centers = self._value_centers(width, slots)
+        name_limit = max(centers[0] - 24, 60) if centers else width - 20
+        title = str(data["text"])
+        while title and self._font_name.measure(title) > name_limit:
+            title = title[:-1]
+        if title != str(data["text"]):
+            title = title[:-1] + "…"
+        canvas.create_text(
+            x,
+            middle,
+            text=title,
+            anchor="w",
+            fill=ROW_TEXT,
+            font=self._font_name,
+            tags=("row",),
+        )
+        for index, value in enumerate(values[:slots]):
+            canvas.create_text(
+                centers[index],
+                middle,
+                text=str(value),
+                anchor="center",
+                fill=MUTED,
+                font=self._font_value,
+                tags=("row",),
+            )
+
+    def _draw_header(self, width: int | None = None) -> None:
+        canvas = self._header
+        width = width or max(canvas.winfo_width(), 10)
+        canvas.delete("all")
+        canvas.create_rectangle(
+            0, 0, width, canvas.winfo_height(), fill=HEADER_BG, outline=HEADER_BG
+        )
+        middle = canvas.winfo_height() // 2
+        canvas.create_text(
+            14,
+            middle,
+            text=self.headers[0] if self.headers else "",
+            anchor="w",
+            fill=MUTED,
+            font=self._font_header,
+        )
+        slots = max(len(self.column_widths) - 1, 0)
+        for index, title in enumerate(self.headers[1 : slots + 1]):
+            centers = self._value_centers(width, slots)
+            canvas.create_text(
+                centers[index],
+                middle,
+                text=title,
+                anchor="center",
+                fill=MUTED,
+                font=self._font_header,
+            )
+
+    # ------------------------------------------------------------------ 交互
+
+    def _row_at(self, event_y: int) -> str | None:
+        if self.row_height <= 0:
+            return None
+        y = self._body.canvasy(event_y)
+        index = int(y // self.row_height)
+        items = list(self._items)
+        if 0 <= index < len(items):
+            return items[index]
+        return None
+
+    def _on_click(self, event) -> None:
+        iid = self._row_at(event.y)
+        if iid is None:
+            return
         self.selection_set(iid)
         if self.on_row is not None:
             self.on_row(iid)
 
-    def _hover(self, iid: str, entering: bool) -> None:
-        if iid == self._selected:
+    def _on_motion(self, event) -> None:
+        self._set_hover(self._row_at(event.y))
+
+    def _set_hover(self, iid: str | None) -> None:
+        if iid == self._hover:
             return
-        row = self._rows.get(iid)
-        if row is None:
-            return
-        try:
-            row.configure(fg_color=ROW_HOVER if entering else ROW_BG)
-        except tk.TclError:
-            pass
+        self._hover = iid
+        self._schedule_redraw()
+
+    def _on_wheel(self, event) -> None:
+        self._body.yview_scroll(int(-event.delta / 120) * 3, "units")
 
     def _apply_selection(self, iid: str) -> None:
-        previous = self._selected
         self._selected = iid
-        for key in (previous, iid):
-            row = self._rows.get(key) if key else None
-            if row is None:
-                continue
-            try:
-                row.configure(fg_color=ROW_SELECTED if key == iid else ROW_BG)
-            except tk.TclError:
-                pass
+        self._schedule_redraw()
         for callback in list(self._select_callbacks):
             try:
                 callback(None)
-            except Exception:  # noqa: BLE001 - 回调出错不能影响选择
+            except Exception:  # noqa: BLE001 - 回调出错不影响选择
                 pass
