@@ -330,6 +330,66 @@ class LauncherApp:
 
         return Fetcher(sources=sources_for(self.config.download_source))
 
+    def import_modpack(self, archive, info, instance: str, game_version: str) -> str | None:
+        """导入整合包；返回错误文案（None 表示已经开装）。"""
+        from gelauncher.core.install_vanilla import (
+            InstallError,
+            validate_instance_name,
+        )
+
+        try:
+            instance = validate_instance_name(instance)
+        except InstallError as exc:
+            return str(exc)
+        if self.layout.instance_exists(instance) or self.layout.version_dir(instance).exists():
+            return f"实例「{instance}」已经存在，换个名字"
+
+        window = self.open_log_window(instance)
+        window.start_session(f"导入整合包 {info.name}")
+        window.append(f"[LAUNCHER] 游戏目录：{self.layout.root}")
+        window.append(f"[LAUNCHER] 来源：{archive}")
+        window.append(f"[LAUNCHER] {info.summary()}")
+        window.set_status("导入整合包…")
+        fetcher = self.make_fetcher()
+
+        def progress(stage: str, message: str) -> None:
+            self.messages.put(("log", instance, f"[{stage}] {message}"))
+
+        def work() -> None:
+            from gelauncher.core import modpack
+
+            try:
+                report = modpack.install_modpack(
+                    self.layout,
+                    Path(archive),
+                    instance_name=instance,
+                    info=info,
+                    game_version=game_version,
+                    fetcher=fetcher,
+                    progress=progress,
+                )
+                self.messages.put(
+                    (
+                        "log",
+                        instance,
+                        f"[LAUNCHER] 导入完成：下载 {report.downloads.downloaded} 个文件，"
+                        f"已存在 {report.downloads.skipped} 个",
+                    )
+                )
+                for note in info.notes:
+                    self.messages.put(("log", instance, f"[LAUNCHER] {note}"))
+                self.messages.put(("status", f"{instance} 导入完成"))
+                self.messages.put(("refresh", report.instance))
+                self.messages.put(("open_version", report.instance))
+            except Exception as exc:  # noqa: BLE001
+                self.messages.put(("log", instance, f"[ERROR] 导入失败：{exc}"))
+                self.messages.put(("error", f"导入失败：{exc}"))
+            finally:
+                self.messages.put(("idle", None))
+
+        self._start_job(work)
+        return None
+
     def install_loader(self, instance: str, kind: str, loader_version: str | None = None) -> None:
         from gelauncher.core.install_loader import LOADER_LABELS, loader_of
 

@@ -104,8 +104,11 @@ class VersionsPage(Page):
         ttk.Button(toolbar, text="安装原版…", width=11, command=self._install_vanilla).grid(
             row=0, column=2, padx=(8, 0)
         )
-        ttk.Button(toolbar, text="刷新", width=8, command=self.refresh).grid(
+        ttk.Button(toolbar, text="导入整合包…", width=12, command=self._import_modpack).grid(
             row=0, column=3, padx=(6, 0)
+        )
+        ttk.Button(toolbar, text="刷新", width=8, command=self.refresh).grid(
+            row=0, column=4, padx=(6, 0)
         )
 
         self.tree = ttk.Treeview(
@@ -219,6 +222,27 @@ class VersionsPage(Page):
         from gelauncher.ui.install_dialog import VanillaInstallDialog
 
         VanillaInstallDialog(self, self.app, self.app.install_vanilla)
+
+    def _import_modpack(self) -> None:
+        from tkinter import filedialog
+
+        from gelauncher.core.modpack import ModpackError, detect
+        from gelauncher.ui.import_dialog import ModpackImportDialog
+
+        path = filedialog.askopenfilename(
+            title="选整合包",
+            filetypes=[("整合包", "*.zip *.mrpack"), ("全部文件", "*.*")],
+            parent=self,
+        )
+        if not path:
+            return
+        archive = Path(path)
+        try:
+            info = detect(archive)
+        except ModpackError as exc:
+            messagebox.showerror("认不出整合包", str(exc), parent=self)
+            return
+        ModpackImportDialog(self, self.app, archive, info, self.app.import_modpack)
 
     def refresh(self, select: str | None = None) -> None:
         self.tree.delete(*self.tree.get_children())

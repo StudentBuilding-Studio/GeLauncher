@@ -582,3 +582,22 @@ def test_install_dialog_instance_name_follows_selection(app, monkeypatch):
     dialog.tree.selection_set("1.21.9")
     app.root.update()
     assert dialog.instance_var.get() == "1.21.9"
+
+def test_modpack_import_dialog_defaults(app, tmp_path):
+    from gelauncher.core.modpack import ModpackInfo
+    from gelauncher.ui.import_dialog import ModpackImportDialog
+
+    info = ModpackInfo(
+        provider="Modrinth",
+        name="我的整合包",
+        version="1.0",
+        game_version="1.20.1",
+        loader="fabric",
+        loader_version="0.15.11",
+        overrides=["overrides/"],
+    )
+    dialog = ModpackImportDialog(app.root, app, tmp_path / "x.mrpack", info, lambda *a: None)
+    assert dialog.instance_var.get() == "我的整合包"
+    assert dialog.version_var.get() == "1.20.1"
+    assert dialog.loader_var.get() == "fabric 0.15.11"
+    dialog.destroy()

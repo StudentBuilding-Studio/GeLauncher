@@ -326,6 +326,45 @@ def cmd_available(args: argparse.Namespace, config: Config) -> int:
     return 0
 
 
+def cmd_import_modpack(args: argparse.Namespace, config: Config) -> int:
+    from .core import modpack
+
+    layout = _make_layout(args, config)
+    fetcher = _fetcher(args, config)
+    try:
+        info = modpack.detect(args.file)
+    except modpack.ModpackError as exc:
+        print(f"认不出整合包：{exc}", file=sys.stderr)
+        return 1
+    print(f"识别为：{info.summary()}")
+    for note in info.notes:
+        print(f"  [提示] {note}")
+    try:
+        report = modpack.install_modpack(
+            layout,
+            args.file,
+            instance_name=args.instance_name,
+            info=info,
+            game_version=args.version,
+            fetcher=fetcher,
+            progress=lambda stage, message: print(f"  [{stage}] {message}", flush=True),
+        )
+    except (modpack.ModpackError, InstallError) as exc:
+        print(f"导入失败：{exc}", file=sys.stderr)
+        return 1
+    if report.downloads.failures:
+        print(f"有 {len(report.downloads.failures)} 个文件没下下来：", file=sys.stderr)
+        for name, reason in report.downloads.failures[:10]:
+            print(f"  - {name}：{reason}", file=sys.stderr)
+        return 1
+    print(
+        f"导入完成：{report.instance}（下载 {report.downloads.downloaded} 个，"
+        f"已存在 {report.downloads.skipped} 个）"
+    )
+    print(f"可以启动了：python -m gelauncher launch --version-id {report.instance}")
+    return 0
+
+
 def _print_progress(stage: str, done: int, total: int, message: str) -> None:
     if stage in ("assets", "libraries") and total > 0:
         if done % 100 == 0 or done == total:
@@ -565,6 +604,16 @@ def build_parser() -> argparse.ArgumentParser:
     repair.add_argument("--version-id", dest="version", required=True, help="实例名")
     repair.add_argument("--threads", type=int, default=8)
     repair.set_defaults(func=cmd_repair)
+
+    import_cmd = sub.add_parser(
+        "import-modpack", help="导入整合包（.mrpack / MCBBS / HMCL 导出 / .minecraft 结构 zip）"
+    )
+    _add_common(import_cmd)
+    import_cmd.add_argument("--file", type=Path, required=True, help="整合包文件")
+    import_cmd.add_argument("--instance-name", dest="instance_name", help="实例名，默认用整合包名字")
+    import_cmd.add_argument("--version", help="游戏版本（包里识别不出来时手动指定，例如 1.20.1）")
+    import_cmd.add_argument("--threads", type=int, default=8)
+    import_cmd.set_defaults(func=cmd_import_modpack)
 
     install = sub.add_parser("install", help="安装一个原版版本（库 / assets / 客户端 jar）")
     _add_common(install)
