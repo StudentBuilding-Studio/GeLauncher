@@ -7,6 +7,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from pathlib import Path
 
 from gelauncher.core import net
 from gelauncher.core.net import BMCLAPI, OFFICIAL, Fetcher, Source, sources_for
@@ -119,3 +120,16 @@ def test_download_source_normalized(tmp_path):
     config.download_source = "mirror"
     config._normalize()
     assert config.download_source == "mirror"
+
+def test_download_all_stops_when_cancelled(server):
+    from gelauncher.core.cancel import Cancelled
+
+    server.routes["/a.bin"] = b"x" * 1024
+    source = _source(server.server_address[1], "official", "/")
+    fetcher = Fetcher(sources=(source,), retries=1, timeout=5)
+    job = net.DownloadJob(
+        urls=[f"http://127.0.0.1:{server.server_address[1]}/a.bin"],
+        destination=Path("unused"),
+    )
+    with pytest.raises(Cancelled):
+        fetcher.download_all([job], should_stop=lambda: True)

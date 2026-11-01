@@ -32,6 +32,9 @@ USER_AGENT = "gelauncher/0.1 (+https://example.invalid)"
 CHUNK = 64 * 1024
 
 
+from .cancel import Cancelled
+
+
 class DownloadError(RuntimeError):
     """所有源都试过了还是下不下来。"""
 
@@ -762,25 +765,49 @@ class Fetcher:
 
     # ------------------------------------------------------------------ 批量
 
-    def download_all(self, jobs: Iterable[DownloadJob], on_done: Callable[[DownloadJob, DownloadReport], None] | None = None) -> DownloadReport:
+    def download_all(
+        self,
+        jobs: Iterable[DownloadJob],
+        on_done: Callable[[DownloadJob, DownloadReport], None] | None = None,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> DownloadReport:
         total = DownloadReport()
         job_list = list(jobs)
         if not job_list:
             return total
 
         def worker(job: DownloadJob) -> DownloadReport:
+            if should_stop is not None and should_stop():
+                raise Cancelled("任务已取消")
             try:
                 return self.download(job)
+            except Cancelled:
+                raise
             except Exception as exc:  # noqa: BLE001 - 单个失败不能拖垮整批
                 failed = DownloadReport()
                 failed.failures.append((job.describe(), str(exc)))
                 return failed
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, self.threads)) as pool:
-            for job, report in zip(job_list, pool.map(worker, job_list)):
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=max(1, self.threads))
+        futures = {pool.submit(worker, job): job for job in job_list}
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                if should_stop is not None and should_stop():
+                    for pending in futures:
+                        pending.cancel()
+                    raise Cancelled("任务已取消")
+                job = futures[future]
+                try:
+                    report = future.result()
+                except Cancelled:
+                    for pending in futures:
+                        pending.cancel()
+                    raise
                 total.merge(report)
                 if on_done is not None:
                     on_done(job, report)
+        finally:
+            pool.shutdown(wait=False)
         return total
 
 

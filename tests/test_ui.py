@@ -287,7 +287,10 @@ def test_install_loader_logs_target_dir(app, monkeypatch):
     deadline = time.time() + 5
     content = ""
     while time.time() < deadline:
-        content = window.text.get("1.0", "end")
+        try:
+            content = window.text.get("1.0", "end")
+        except tkinter.TclError:
+            break
         if "装好了" in content:
             break
         app._poll()
@@ -507,7 +510,7 @@ def test_install_vanilla_blocks_duplicate_instance(app, monkeypatch):
 
         messages = []
 
-    def fake_install(layout, version_id, *, instance_name=None, progress=None, fetcher=None):
+    def fake_install(layout, version_id, *, instance_name=None, progress=None, fetcher=None, cancel=None):
         called["instance"] = instance_name
         return FakeReport()
 
@@ -601,3 +604,51 @@ def test_modpack_import_dialog_defaults(app, tmp_path):
     assert dialog.version_var.get() == "1.20.1"
     assert dialog.loader_var.get() == "fabric 0.15.11"
     dialog.destroy()
+
+def test_task_window_has_cancel_button(app):
+    token, window = app.begin_task("测试实例")
+    assert window.cancel_button is not None
+    assert str(window.cancel_button.cget("text")) == "取消"
+    window._do_cancel()
+    assert token.cancelled()
+    window.destroy()
+    app.task_window = None
+    app.task_token = None
+
+
+def test_cancelled_install_cleans_partial_and_reports(app, monkeypatch):
+    from gelauncher.core.cancel import Cancelled
+    from gelauncher.ui import app as ui_app
+
+    def fake_install(layout, version_id, *, instance_name=None, progress=None, fetcher=None, cancel=None):
+        root = layout.version_dir(instance_name)
+        root.mkdir(parents=True, exist_ok=True)
+        (root / f"{instance_name}.json").write_text("{}", encoding="utf-8")
+        raise Cancelled()
+
+    monkeypatch.setattr(ui_app, "install_version", fake_install)
+    assert app.install_vanilla("1.21.8", "取消实例") is None
+    _pump(app.root, 5.0, lambda: not app.busy)
+    assert not app.layout.version_dir("取消实例").exists()
+    assert any("已取消" in text for _kind, text in app.dialogs), app.dialogs
+
+def test_finished_install_closes_task_window_and_shows_result(app, monkeypatch):
+    from gelauncher.ui import app as ui_app
+
+    class FakeReport:
+        version_id = "完成实例"
+        messages = []
+        class downloads:
+            failures = []
+            downloaded = 3
+
+    def fake_install(layout, version_id, *, instance_name=None, progress=None, fetcher=None, cancel=None):
+        return FakeReport()
+
+    monkeypatch.setattr(ui_app, "install_version", fake_install)
+    assert app.install_vanilla("1.21.8", "完成实例") is None
+    _pump(app.root, 5.0, lambda: not app.busy and app.task_window is None)
+    assert app.task_window is None
+    assert any(kind == "info" and "安装完成" in text for kind, _title, text in [
+        (k, t, m) for k, t, m in [(d[0], d[0], d[1]) for d in app.dialogs]
+    ]) or any("安装完成" in str(d[1]) for d in app.dialogs)

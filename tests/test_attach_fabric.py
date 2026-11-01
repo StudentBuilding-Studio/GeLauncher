@@ -319,7 +319,7 @@ def test_vanilla_install_writes_client_version(tmp_path):
             report.downloaded = 1
             return report
 
-        def download_all(self, jobs, on_done=None):
+        def download_all(self, jobs, on_done=None, should_stop=None):
             return DownloadReport()
 
     layout = GameLayout(tmp_path / ".minecraft")
@@ -347,7 +347,7 @@ def test_processors_get_vanilla_shim(tmp_path, monkeypatch):
 
     seen = {}
 
-    def fake_attach(layout, instance, actual, installer, *, loader, fetcher, java, progress=None):
+    def fake_attach(layout, instance, actual, installer, *, loader, fetcher, java, progress=None, cancel=None):
         seen["shim_jar"] = layout.version_jar_path(actual).is_file()
         seen["shim_json"] = layout.version_json_path(actual).is_file()
         install_loader._merge_loader_json(

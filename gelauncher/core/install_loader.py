@@ -350,6 +350,11 @@ def fabric_attached(layout: GameLayout, version_id: str) -> bool:
     return loader_of(layout, version_id) == "fabric"
 
 
+def _raise_if_cancelled(cancel) -> None:
+    if cancel is not None:
+        cancel.raise_if_cancelled()
+
+
 def _require_no_other_loader(layout: GameLayout, mc_version: str, loader: str) -> None:
     current = loader_of(layout, mc_version)
     if current and current != loader:
@@ -444,11 +449,13 @@ def attach_fabric(
     fetcher: Fetcher | None = None,
     progress: ProgressHook | None = None,
     env: Environment | None = None,
+    cancel=None,
 ) -> LoaderReport:
     """把 Fabric 合并进现有实例（实例名不变，启动它即启动 Fabric）。"""
     fetcher = _ensure_cache(_prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES)), layout)
     require_vanilla(layout, instance)
     _require_no_other_loader(layout, instance, "fabric")
+    _raise_if_cancelled(cancel)
     env = env or Environment()
     actual = layout.actual_version(instance)
 
@@ -471,7 +478,9 @@ def attach_fabric(
         done += 1
         _notify(progress, "libraries", f"{done}/{len(jobs)} {job.destination.name}")
 
-    report = fetcher.download_all(jobs, on_done=on_done)
+    report = fetcher.download_all(
+        jobs, on_done=on_done, should_stop=(cancel.cancelled if cancel else None)
+    )
     if not report.ok:
         raise LoaderInstallError(
             "库下载失败：\n" + "\n".join(f"  - {n}：{r}" for n, r in report.failures[:10])
@@ -819,6 +828,7 @@ def _attach_via_processors(
     fetcher: Fetcher,
     java: JavaRuntime | None,
     progress: ProgressHook | None = None,
+    cancel=None,
 ) -> None:
     """跑 processors，把产出的版本 JSON 合并进实例，并下载加载器库。"""
     from .forge_processors import ProcessorError, install_with_processors
@@ -832,13 +842,16 @@ def _attach_via_processors(
         fetcher=fetcher,
         java=runtime.path,
         progress=progress,
+        cancel=cancel,
     )
     raw = _merge_loader_json(layout, instance, patch, loader=loader)
 
     merged = VersionJson.from_dict(raw, f"merged({instance})")
     jobs = _library_jobs(layout, merged, Environment())
     _notify(progress, "libraries", f"下载 {len(jobs)} 个加载器库…")
-    report = fetcher.download_all(jobs)
+    report = fetcher.download_all(
+        jobs, should_stop=(cancel.cancelled if cancel else None)
+    )
     if not report.ok:
         raise LoaderInstallError(
             "加载器库下载失败：\n"
@@ -856,11 +869,13 @@ def install_forge(
     progress: ProgressHook | None = None,
     use_mirror: bool = True,
     attach: bool = True,
+    cancel=None,
 ) -> LoaderReport:
     fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
     fetcher = _ensure_cache(fetcher, layout)
     require_vanilla(layout, instance)
     actual = layout.actual_version(instance)
+    _raise_if_cancelled(cancel)
     if attach:
         _require_no_other_loader(layout, instance, "forge")
 
@@ -903,6 +918,7 @@ def install_forge(
                 fetcher=fetcher,
                 java=java,
                 progress=progress,
+                cancel=cancel,
             )
         except ProcessorError as exc:
             if created_shim:
@@ -942,6 +958,7 @@ def install_forge(
         args,
         cwd=layout.root,
         on_line=lambda line: _notify(progress, "log", line),
+        cancel=cancel,
     )
 
     generated = forge_version_id(actual, coordinate)
@@ -978,11 +995,13 @@ def install_neoforge(
     progress: ProgressHook | None = None,
     use_mirror: bool = True,
     attach: bool = True,
+    cancel=None,
 ) -> LoaderReport:
     fetcher = _prefer_mirror(fetcher or Fetcher(sources=DEFAULT_SOURCES))
     fetcher = _ensure_cache(fetcher, layout)
     require_vanilla(layout, instance)
     actual = layout.actual_version(instance)
+    _raise_if_cancelled(cancel)
     if attach:
         _require_no_other_loader(layout, instance, "neoforge")
 
@@ -1020,6 +1039,7 @@ def install_neoforge(
                 fetcher=fetcher,
                 java=java,
                 progress=progress,
+                cancel=cancel,
             )
         except ProcessorError as exc:
             if created_shim:
@@ -1061,6 +1081,7 @@ def install_neoforge(
         args,
         cwd=layout.root,
         on_line=lambda line: _notify(progress, "log", line),
+        cancel=cancel,
     )
 
     generated = _new_version_dir(layout, before)
@@ -1112,6 +1133,7 @@ def run_installer(
     cwd: Path,
     timeout: int = INSTALLER_TIMEOUT,
     on_line: Callable[[str], None] | None = None,
+    cancel=None,
 ) -> list[str]:
     """跑 installer，把输出逐行喂给回调，失败时抛出带尾部日志的异常。"""
     command = [str(java.path), "-jar", str(installer), *args]
@@ -1141,6 +1163,17 @@ def run_installer(
 
     thread = threading.Thread(target=pump, daemon=True)
     thread.start()
+    watcher = None
+    if cancel is not None:
+
+        def _watch() -> None:
+            while process.poll() is None:
+                if cancel.wait(0.2):
+                    process.kill()
+                    return
+
+        watcher = threading.Thread(target=_watch, daemon=True)
+        watcher.start()
     try:
         returncode = process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -1149,6 +1182,8 @@ def run_installer(
             f"installer 超过 {timeout // 60} 分钟没结束，已终止。\n最后输出：\n{tail(output)}"
         ) from None
     thread.join(timeout=5)
+    if cancel is not None:
+        cancel.raise_if_cancelled()
 
     if returncode != 0:
         joined = "\n".join(output)

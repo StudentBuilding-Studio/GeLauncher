@@ -202,12 +202,18 @@ def install_version(
     env: Environment | None = None,
     progress: ProgressHook | None = None,
     sources: Iterable[Source] | None = None,
+    cancel=None,
 ) -> InstallReport:
     """安装一个原版版本到一个实例。
 
     实例名 = ``versions/<实例>/`` 的文件夹名，默认和版本号相同。
     同名实例已经存在时抛 ``InstanceExistsError``（不再覆盖，和 HMCL 一样）。
     """
+    def _check() -> None:
+        if cancel is not None:
+            cancel.raise_if_cancelled()
+
+    _check()
     instance = validate_instance_name(instance_name or version_id)
     if layout.instance_exists(instance) or layout.version_dir(instance).exists():
         raise InstanceExistsError(f"实例「{instance}」已经存在")
@@ -230,6 +236,7 @@ def install_version(
     ensure_launcher_profiles(layout)
 
     # ---- 版本 JSON ----
+    _check()
     _notify(progress, "version", 0, 1, f"下载 {version_id} 的版本 JSON…")
     version_json_path = layout.version_json_path(instance)
     result = fetcher.download(
@@ -261,6 +268,7 @@ def install_version(
     if client is None or not client.url:
         report.messages.append("版本 JSON 里没有 downloads.client，跳过客户端 jar")
     else:
+        _check()
         _notify(progress, "client", 0, 1, "下载客户端 jar…")
         result = fetcher.download(
             DownloadJob(
@@ -283,12 +291,15 @@ def install_version(
         done += 1
         _notify(progress, "libraries", done, len(jobs), job.describe())
 
-    result = fetcher.download_all(jobs, on_done=_lib_done)
+    result = fetcher.download_all(
+        jobs, on_done=_lib_done, should_stop=(cancel.cancelled if cancel else None)
+    )
     report.downloads.merge(result)
 
     # ---- 资源 ----
     if version.asset_index is not None:
         index = version.asset_index
+        _check()
         _notify(progress, "assets_index", 0, 1, f"下载资源索引 {index.id}…")
         result = fetcher.download(
             DownloadJob(
@@ -314,13 +325,20 @@ def install_version(
 
             # 资源文件数量多、单个很小：镜像优先 + 关赛跑 + keep-alive，别每文件都握手
             asset_fetcher = for_bulk_assets(fetcher)
-            report.downloads.merge(asset_fetcher.download_all(jobs, on_done=_asset_done))
+            report.downloads.merge(
+                asset_fetcher.download_all(
+                    jobs,
+                    on_done=_asset_done,
+                    should_stop=(cancel.cancelled if cancel else None),
+                )
+            )
     else:
         report.messages.append("版本 JSON 里没有 assetIndex，跳过资源下载")
 
     # ---- 日志配置 ----
     if version.logging is not None and version.logging.file.url:
         log_file = version.logging.file
+        _check()
         _notify(progress, "logging", 0, 1, "下载日志配置…")
         report.downloads.merge(
             fetcher.download(

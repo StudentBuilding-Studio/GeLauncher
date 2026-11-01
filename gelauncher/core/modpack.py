@@ -457,22 +457,37 @@ def _install_loader(
     *,
     fetcher: Fetcher,
     progress,
+    cancel=None,
 ) -> bool:
     if not info.loader:
         return False
     progress("loader", f"安装 {info.loader} {info.loader_version or ''}".strip())
+    if cancel is not None:
+        cancel.raise_if_cancelled()
     try:
         if info.loader == "fabric":
             install_loader.attach_fabric(
-                layout, instance, loader_version=info.loader_version, fetcher=fetcher
+                layout,
+                instance,
+                loader_version=info.loader_version,
+                fetcher=fetcher,
+                cancel=cancel,
             )
         elif info.loader == "forge":
             install_loader.install_forge(
-                layout, instance, forge_version=info.loader_version, fetcher=fetcher
+                layout,
+                instance,
+                forge_version=info.loader_version,
+                fetcher=fetcher,
+                cancel=cancel,
             )
         elif info.loader == "neoforge":
             install_loader.install_neoforge(
-                layout, instance, neoforge_version=info.loader_version, fetcher=fetcher
+                layout,
+                instance,
+                neoforge_version=info.loader_version,
+                fetcher=fetcher,
+                cancel=cancel,
             )
     except install_loader.LoaderInstallError as exc:
         raise ModpackError(f"装加载器失败：{exc}") from exc
@@ -536,6 +551,7 @@ def install_modpack(
     info: ModpackInfo | None = None,
     game_version: str | None = None,
     curse_api_key: str | None = None,
+    cancel=None,
     fetcher: Fetcher,
     progress=None,
 ) -> ModpackReport:
@@ -543,6 +559,8 @@ def install_modpack(
         if progress is not None:
             progress(stage, message)
 
+    if cancel is not None:
+        cancel.raise_if_cancelled()
     info = info or detect(archive_path)
     version = (game_version or info.game_version or "").strip()
     if not version:
@@ -554,12 +572,16 @@ def install_modpack(
 
     notify("vanilla", f"安装原版 {version}…")
     report = install_vanilla.install_version(
-        layout, version, instance_name=instance, fetcher=fetcher
+        layout, version, instance_name=instance, fetcher=fetcher, cancel=cancel
     )
     if not report.ok:
         raise ModpackError("原版安装失败：" + str(report.downloads.failures[:3]))
 
-    loader_installed = _install_loader(layout, instance, info, fetcher=fetcher, progress=notify)
+    if cancel is not None:
+        cancel.raise_if_cancelled()
+    loader_installed = _install_loader(
+        layout, instance, info, fetcher=fetcher, progress=notify, cancel=cancel
+    )
 
     root = layout.version_dir(instance)
     jobs: list[DownloadJob] = []
@@ -603,7 +625,9 @@ def install_modpack(
     downloads = DownloadReport()
     if jobs:
         notify("files", f"下载 {len(jobs)} 个整合包文件…")
-        downloads.merge(fetcher.download_all(jobs))
+        downloads.merge(
+            fetcher.download_all(jobs, should_stop=(cancel.cancelled if cancel else None))
+        )
 
     notify("overrides", "解压覆盖文件…")
     with zipfile.ZipFile(archive_path) as archive:

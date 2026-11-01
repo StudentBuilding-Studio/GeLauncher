@@ -206,6 +206,7 @@ def _download_profile_libraries(
     libraries: list[dict],
     *,
     progress: ProgressHook | None = None,
+    cancel=None,
 ) -> DownloadReport:
     jobs: list[DownloadJob] = []
     for entry in libraries:
@@ -233,7 +234,9 @@ def _download_profile_libraries(
         return DownloadReport()
     if progress:
         progress("processors", f"下载 processor 需要的 {len(jobs)} 个库…")
-    return fetcher.download_all(jobs)
+    return fetcher.download_all(
+        jobs, should_stop=(cancel.cancelled if cancel else None)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -266,6 +269,7 @@ def _run_processor(
     *,
     cwd: Path,
     on_line: Callable[[str], None] | None = None,
+    cancel=None,
 ) -> None:
     command = [str(java), "-cp", os.pathsep.join(str(p) for p in classpath + [jar]), _main_class(jar), *args]
     output: list[str] = []
@@ -290,8 +294,19 @@ def _run_processor(
 
     thread = threading.Thread(target=pump, daemon=True)
     thread.start()
+    if cancel is not None:
+
+        def _watch() -> None:
+            while process.poll() is None:
+                if cancel.wait(0.2):
+                    process.kill()
+                    return
+
+        threading.Thread(target=_watch, daemon=True).start()
     code = process.wait()
     thread.join(timeout=5)
+    if cancel is not None:
+        cancel.raise_if_cancelled()
     if code != 0:
         raise ProcessorError(
             f"processor 失败（退出码 {code}）：{' '.join(args[:3])}\n" + "\n".join(output[-20:])
@@ -320,15 +335,20 @@ def install_with_processors(
     fetcher: Fetcher,
     java: Path,
     progress: ProgressHook | None = None,
+    cancel=None,
 ) -> dict:
     """跑完 processors，返回要合并进实例的版本 JSON（patch）。"""
+    if cancel is not None:
+        cancel.raise_if_cancelled()
     profile = read_profile(installer)
     if profile.minecraft and profile.minecraft != mc_version:
         raise ProcessorError(
             f"installer 是给 {profile.minecraft} 的，当前实例是 {mc_version}"
         )
     _copy_embedded_maven(installer, layout)
-    report = _download_profile_libraries(fetcher, layout, profile.libraries, progress=progress)
+    report = _download_profile_libraries(
+        fetcher, layout, profile.libraries, progress=progress, cancel=cancel
+    )
     if not report.ok:
         raise ProcessorError(
             "processor 依赖下载失败："
@@ -380,6 +400,8 @@ def install_with_processors(
 
         processors = profile.processors
         for index, processor in enumerate(processors, start=1):
+            if cancel is not None:
+                cancel.raise_if_cancelled()
             sides = processor.get("sides") or []
             if sides and "client" not in sides:
                 continue
@@ -409,7 +431,9 @@ def install_with_processors(
                 if not item.is_file():
                     raise ProcessorError(f"processor 依赖缺文件：{item}")
             args = [_parse_literal(str(arg), vars, layout, extract) for arg in processor.get("args") or []]
-            _run_processor(java, jar_path, classpath, args, cwd=temp_dir, on_line=None)
+            _run_processor(
+                java, jar_path, classpath, args, cwd=temp_dir, on_line=None, cancel=cancel
+            )
 
             for out_path, expected in parsed_outputs.items():
                 if not out_path.is_file():

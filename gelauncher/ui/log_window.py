@@ -20,17 +20,30 @@ LEVEL_TAGS = {
 
 
 class LogWindow(tk.Toplevel):
-    def __init__(self, master: tk.Misc, version_id: str, *, log_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        master: tk.Misc,
+        version_id: str,
+        *,
+        log_path: Path | None = None,
+        task: bool = False,
+        on_cancel=None,
+    ) -> None:
         super().__init__(master)
         self.version_id = version_id
         self.log_path = log_path
         self._handle = None
-        self.title(f"日志 - {version_id}")
+        self.task = task
+        self.on_cancel = on_cancel
+        self.cancel_button = None
+        self.title(f"{'安装/导入' if task else '日志'} - {version_id}")
         self.geometry("900x480")
         self.minsize(560, 280)
 
         self.autoscroll = tk.BooleanVar(value=True)
-        self.status_var = tk.StringVar(value="等待游戏输出…")
+        self.status_var = tk.StringVar(
+            value="安装中…" if task else "等待游戏输出…"
+        )
 
         self._build()
 
@@ -46,6 +59,11 @@ class LogWindow(tk.Toplevel):
         ttk.Label(toolbar, textvariable=self.status_var, anchor="e").pack(
             side="right", fill="x", expand=True
         )
+        if self.task and self.on_cancel is not None:
+            self.cancel_button = ttk.Button(
+                toolbar, text="取消", width=8, command=self._do_cancel
+            )
+            self.cancel_button.pack(side="right", padx=(8, 0))
 
         frame = ttk.Frame(self, padding=(6, 0, 6, 6))
         frame.grid(row=1, column=0, sticky="nsew")
@@ -69,6 +87,13 @@ class LogWindow(tk.Toplevel):
         xscroll = ttk.Scrollbar(frame, orient="horizontal", command=self.text.xview)
         xscroll.grid(row=1, column=0, sticky="ew")
         self.text.configure(yscrollcommand=yscroll.set, xscrollcommand=xscroll.set)
+
+    def _do_cancel(self) -> None:
+        if self.cancel_button is not None:
+            self.cancel_button.configure(state="disabled", text="正在取消…")
+        self.status_var.set("正在取消，等当前步骤结束…")
+        if self.on_cancel is not None:
+            self.on_cancel()
 
     # ------------------------------------------------------------------
 

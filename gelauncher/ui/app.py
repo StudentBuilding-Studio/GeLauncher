@@ -48,6 +48,8 @@ class LauncherApp:
         self.busy = False
         self.processes: dict[str, object] = {}
         self.log_windows: dict[str, LogWindow] = {}
+        self.task_token = None
+        self.task_window: LogWindow | None = None
         self.crash_log = self.layout.root / "logs" / "gelauncher-ui-crash.log"
         self.nav_buttons: dict[str, ttk.Button] = {}
 
@@ -185,19 +187,30 @@ class LauncherApp:
 
     # ---------------------------------------------------------------- 日志窗口
 
-    def open_log_window(self, version_id: str) -> LogWindow:
+    def open_log_window(
+        self, version_id: str, *, task: bool = False, on_cancel=None
+    ) -> LogWindow:
         existing = self.log_windows.get(version_id)
-        if existing is not None:
+        if existing is not None and not task:
             try:
                 existing.deiconify()
                 existing.lift()
                 return existing
             except tk.TclError:
                 self.log_windows.pop(version_id, None)
+        if existing is not None and task:
+            # 安装/导入要用带取消按钮的窗口，旧日志窗口先关掉
+            self.log_windows.pop(version_id, None)
+            try:
+                existing.destroy()
+            except tk.TclError:
+                pass
         window = LogWindow(
             self.root,
             version_id,
             log_path=self.layout.root / "logs" / f"gelauncher-{version_id}.log",
+            task=task,
+            on_cancel=on_cancel,
         )
 
         def forget() -> None:
@@ -207,6 +220,61 @@ class LauncherApp:
         window.protocol("WM_DELETE_WINDOW", forget)
         self.log_windows[version_id] = window
         return window
+
+
+    # ---------------------------------------------------------------- 任务窗口
+
+    def begin_task(self, instance: str) -> tuple:
+        """开一个带"取消"按钮的安装/导入窗口，返回 (cancel_token, window)。"""
+        from gelauncher.core.cancel import CancelToken
+
+        token = CancelToken()
+        window = self.open_log_window(instance, task=True, on_cancel=token.cancel)
+        self.task_token = token
+        self.task_window = window
+        return token, window
+
+    def finish_task(self, level: str, message: str) -> None:
+        """任务收尾：关掉安装窗口，弹结果框。level = ok / cancelled / error。"""
+        window = self.task_window
+        self.task_window = None
+        self.task_token = None
+        instance = getattr(window, "version_id", None)
+        if instance:
+            self.log_windows.pop(instance, None)
+        if window is not None:
+            try:
+                if window.winfo_exists():
+                    window.destroy()
+            except tk.TclError:
+                pass
+        if level == "ok":
+            messagebox.showinfo("完成", message)
+        elif level == "cancelled":
+            messagebox.showinfo("已取消", message)
+        else:
+            messagebox.showerror("失败", message)
+
+    def cleanup_partial(self, instance: str, before_versions: set[str], created: bool) -> None:
+        """取消/失败时清掉这次新建的实例目录和 installer 生成的临时版本目录。"""
+        import shutil
+
+        versions_root = self.layout.versions_dir.resolve()
+        targets: list[Path] = []
+        if created:
+            targets.append(self.layout.version_dir(instance))
+        for name in set(self.layout.installed_versions()) - before_versions:
+            if name != instance:
+                targets.append(self.layout.version_dir(name))
+        for target in targets:
+            try:
+                resolved = target.resolve()
+                if resolved.parent != versions_root or not resolved.is_dir():
+                    continue
+                shutil.rmtree(resolved)
+                self.log_line(instance, f"[LAUNCHER] 已清理残留目录：{resolved.name}")
+            except (OSError, RuntimeError):
+                pass
 
     # ---------------------------------------------------------------- 游戏进程
 
@@ -344,19 +412,21 @@ class LauncherApp:
         if self.layout.instance_exists(instance) or self.layout.version_dir(instance).exists():
             return f"实例「{instance}」已经存在，换个名字"
 
-        window = self.open_log_window(instance)
+        token, window = self.begin_task(instance)
         window.start_session(f"导入整合包 {info.name}")
         window.append(f"[LAUNCHER] 游戏目录：{self.layout.root}")
         window.append(f"[LAUNCHER] 来源：{archive}")
         window.append(f"[LAUNCHER] {info.summary()}")
         window.set_status("导入整合包…")
         fetcher = self.make_fetcher()
+        before_versions = set(self.layout.installed_versions())
 
         def progress(stage: str, message: str) -> None:
             self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
             from gelauncher.core import modpack
+            from gelauncher.core.cancel import Cancelled
 
             try:
                 report = modpack.install_modpack(
@@ -368,6 +438,7 @@ class LauncherApp:
                     curse_api_key=modpack.effective_curse_api_key(self.config.curse_api_key),
                     fetcher=fetcher,
                     progress=progress,
+                    cancel=token,
                 )
                 self.messages.put(
                     (
@@ -382,9 +453,17 @@ class LauncherApp:
                 self.messages.put(("status", f"{instance} 导入完成"))
                 self.messages.put(("refresh", report.instance))
                 self.messages.put(("open_version", report.instance))
+                self.messages.put(("task_done", ("ok", f"整合包「{instance}」导入完成")))
+            except Cancelled:
+                self.cleanup_partial(instance, before_versions, created=True)
+                self.messages.put(("log", instance, "[LAUNCHER] 已取消，清理残留文件"))
+                self.messages.put(
+                    ("task_done", ("cancelled", f"已取消导入「{instance}」，本次产生的文件已清理"))
+                )
             except Exception as exc:  # noqa: BLE001
+                self.cleanup_partial(instance, before_versions, created=True)
                 self.messages.put(("log", instance, f"[ERROR] 导入失败：{exc}"))
-                self.messages.put(("error", f"导入失败：{exc}"))
+                self.messages.put(("task_done", ("error", f"导入「{instance}」失败：{exc}")))
             finally:
                 self.messages.put(("idle", None))
 
@@ -411,18 +490,20 @@ class LauncherApp:
                 "已经有加载器", f"{instance} 现在装的是 {LOADER_LABELS[current]}，先卸载它。"
             )
             return
-        log_window = self.open_log_window(instance)
+        token, log_window = self.begin_task(instance)
         log_window.start_session(f"给 {instance} 安装 {name}")
         log_window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
         log_window.append(f"[LAUNCHER] 下载源：{self.config.download_source}")
         log_window.set_status(f"安装 {name}…")
         fetcher = self.make_fetcher()
+        before_versions = set(self.layout.installed_versions())
 
         def progress(stage: str, message: str) -> None:
             self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
             from gelauncher.core import install_loader as loaders
+            from gelauncher.core.cancel import Cancelled
 
             try:
                 if kind == "fabric":
@@ -432,6 +513,7 @@ class LauncherApp:
                         loader_version=loader_version,
                         progress=progress,
                         fetcher=fetcher,
+                        cancel=token,
                     )
                 elif kind == "neoforge":
                     report = loaders.install_neoforge(
@@ -440,6 +522,7 @@ class LauncherApp:
                         neoforge_version=loader_version,
                         progress=progress,
                         fetcher=fetcher,
+                        cancel=token,
                     )
                 else:
                     report = loaders.install_forge(
@@ -448,6 +531,7 @@ class LauncherApp:
                         forge_version=loader_version,
                         progress=progress,
                         fetcher=fetcher,
+                        cancel=token,
                     )
                 self.messages.put(("log", instance, f"[LAUNCHER] 装好了：{report.version_id}"))
                 self.messages.put(
@@ -455,9 +539,17 @@ class LauncherApp:
                 )
                 self.messages.put(("refresh", report.version_id))
                 self.messages.put(("open_version", report.version_id))
+                self.messages.put(("task_done", ("ok", f"{name} 已装进「{instance}」")))
+            except Cancelled:
+                self.cleanup_partial(instance, before_versions, created=False)
+                self.messages.put(("log", instance, "[LAUNCHER] 已取消，清理残留文件"))
+                self.messages.put(
+                    ("task_done", ("cancelled", f"已取消安装 {name}，本次产生的临时文件已清理"))
+                )
             except Exception as exc:  # noqa: BLE001
+                self.cleanup_partial(instance, before_versions, created=False)
                 self.messages.put(("log", instance, f"[ERROR] {name} 安装失败：{exc}"))
-                self.messages.put(("error", f"{name} 安装失败：{exc}"))
+                self.messages.put(("task_done", ("error", f"{name} 安装失败：{exc}")))
             finally:
                 self.messages.put(("idle", None))
 
@@ -526,18 +618,21 @@ class LauncherApp:
         if self.layout.instance_exists(instance) or self.layout.version_dir(instance).exists():
             return f"实例「{instance}」已经存在，换个名字"
 
-        window = self.open_log_window(instance)
+        token, window = self.begin_task(instance)
         window.start_session(f"安装 {version_id} 到实例「{instance}」")
         window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
         window.append(f"[LAUNCHER] 下载源：{self.config.download_source}")
         window.set_status(f"安装 {version_id}…")
         fetcher = self.make_fetcher()
+        before_versions = set(self.layout.installed_versions())
 
         def progress(stage: str, done: int, total: int, message: str) -> None:
             self.messages.put(("log", instance, f"[{stage}] {message}"))
             self.messages.put(("progress", done, total))
 
         def work() -> None:
+            from gelauncher.core.cancel import Cancelled
+
             try:
                 report = install_version(
                     self.layout,
@@ -545,6 +640,7 @@ class LauncherApp:
                     instance_name=instance,
                     progress=progress,
                     fetcher=fetcher,
+                    cancel=token,
                 )
                 if report.downloads.failures:
                     self.messages.put(
@@ -556,9 +652,19 @@ class LauncherApp:
                 self.messages.put(("status", f"{instance} 安装完成"))
                 self.messages.put(("refresh", report.version_id))
                 self.messages.put(("open_version", report.version_id))
+                self.messages.put(
+                    ("task_done", ("ok", f"「{instance}」安装完成"))
+                )
+            except Cancelled:
+                self.cleanup_partial(instance, before_versions, created=True)
+                self.messages.put(("log", instance, "[LAUNCHER] 已取消，清理残留文件"))
+                self.messages.put(
+                    ("task_done", ("cancelled", f"已取消安装「{instance}」，本次产生的文件已清理"))
+                )
             except Exception as exc:  # noqa: BLE001
+                self.cleanup_partial(instance, before_versions, created=True)
                 self.messages.put(("log", instance, f"[ERROR] 安装失败：{exc}"))
-                self.messages.put(("error", f"安装失败：{exc}"))
+                self.messages.put(("task_done", ("error", f"安装「{instance}」失败：{exc}")))
             finally:
                 self.messages.put(("idle", None))
 
@@ -714,6 +820,9 @@ class LauncherApp:
                             window.set_status(text)
                         except tk.TclError:
                             pass
+                elif kind == "task_done":
+                    level, text = message[1]
+                    self.finish_task(level, text)
                 elif kind == "status":
                     self.set_status(message[1])
                 elif kind == "progress":

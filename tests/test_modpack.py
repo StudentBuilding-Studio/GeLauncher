@@ -130,7 +130,7 @@ def test_install_modpack_writes_files_and_metadata(tmp_path, monkeypatch):
     )
     layout = GameLayout(tmp_path / ".minecraft")
 
-    def fake_install_version(layout, version_id, *, instance_name=None, fetcher=None):
+    def fake_install_version(layout, version_id, *, instance_name=None, fetcher=None, cancel=None):
         report = type("R", (), {})()
         report.ok = True
         report.downloads = DownloadReport()
@@ -143,7 +143,7 @@ def test_install_modpack_writes_files_and_metadata(tmp_path, monkeypatch):
     monkeypatch.setattr(modpack.install_vanilla, "install_version", fake_install_version)
 
     class FakeFetcher:
-        def download_all(self, jobs, on_done=None):
+        def download_all(self, jobs, on_done=None, should_stop=None):
             report = DownloadReport()
             for job in jobs:
                 job.destination.parent.mkdir(parents=True, exist_ok=True)
@@ -259,7 +259,7 @@ def test_install_curse_uses_api(tmp_path, monkeypatch):
     layout = GameLayout(tmp_path / ".minecraft")
     monkeypatch.setattr(modpack, "_install_loader", lambda *a, **k: False)
 
-    def fake_install(layout, version_id, *, instance_name=None, fetcher=None):
+    def fake_install(layout, version_id, *, instance_name=None, fetcher=None, cancel=None):
         report = type("R", (), {})()
         report.ok = True
         report.downloads = DownloadReport()
@@ -275,7 +275,7 @@ def test_install_curse_uses_api(tmp_path, monkeypatch):
     )
 
     class FakeFetcher:
-        def download_all(self, jobs, on_done=None):
+        def download_all(self, jobs, on_done=None, should_stop=None):
             report = DownloadReport()
             for job in jobs:
                 job.destination.parent.mkdir(parents=True, exist_ok=True)
