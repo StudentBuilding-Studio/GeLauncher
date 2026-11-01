@@ -22,8 +22,9 @@ from .net import DownloadJob, DownloadReport, Fetcher
 
 ProgressHook = "Callable[[str, str], None]"
 
-#: 内置的 CurseForge API key（打包版直接用，源码运行可用环境变量覆盖）
-DEFAULT_CURSE_API_KEY = "2a$10$uQkn36P8xEkOVAwXU85coO0zu3A7HZ/6l0ph.xR809qlguT43uPU2"
+#: CurseForge API key 不内置：留空时走 mod.mcimirror.top 代理（不需要 key）。
+#: 想用官方 API 就在本地设置环境变量 GE_CURSE_API_KEY 或配置文件 curse_api_key。
+DEFAULT_CURSE_API_KEY = ""
 CURSE_API_KEY_ENV = "GE_CURSE_API_KEY"
 
 
