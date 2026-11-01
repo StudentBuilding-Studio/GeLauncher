@@ -349,8 +349,8 @@ class VersionsPage(Page):
 
     # ---------------------------------------------------------------- 二级页
 
-    def _section_row(self, parent, title: str, subtitle: str = "", control=None):
-        """一行"标题 + 说明 + 右侧控件"，模仿 HMCL 的设置行。"""
+    def _section_row(self, parent, title: str, subtitle: str = "", control_factory=None):
+        """一行"标题 + 说明 + 右侧控件"，控件必须建在 row 里（pack 到自己的父容器会错位）。"""
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=6)
         text = ctk.CTkFrame(row, fg_color="transparent")
@@ -371,7 +371,8 @@ class VersionsPage(Page):
                 text_color=theme.MUTED,
                 font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
             ).pack(fill="x", pady=(2, 0))
-        if control is not None:
+        if control_factory is not None:
+            control = control_factory(row)
             control.pack(side="right", padx=(14, 0))
         return row
 
@@ -475,39 +476,46 @@ class VersionsPage(Page):
             ("主类", "mainClass"),
             ("游戏目录", "隔离目录"),
         ):
-            value = ctk.CTkLabel(
+            self._section_row(
                 basic_card.body,
-                textvariable=self.info_vars[key],
-                anchor="e",
-                justify="right",
-                wraplength=460,
-                text_color=theme.MUTED,
-                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+                text,
+                control_factory=lambda row, key=key: ctk.CTkLabel(
+                    row,
+                    textvariable=self.info_vars[key],
+                    anchor="e",
+                    justify="right",
+                    wraplength=420,
+                    text_color=theme.MUTED,
+                    font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+                ),
             )
-            self._section_row(basic_card.body, text, control=value)
 
         # ---------------- 游戏设置 ----------------
         game = self._detail_sections["game"]
         game_card = Card(game, "游戏设置")
         game_card.pack(fill="x", padx=4, pady=(0, 10))
 
-        java_control = ctk.CTkFrame(game_card.body, fg_color="transparent")
         self.java_var = tk.StringVar()
-        self.java_combo = Combo(
-            java_control,
-            variable=self.java_var,
-            values=[self.AUTO_JAVA, *self.app.java_choices()],
-            width=320,
-            command=lambda _value: self._update_java_hint(),
-        )
-        self.java_combo.pack(side="left")
-        button(java_control, "…", self._browse_java, width=38, height=30).pack(
-            side="left", padx=(6, 0)
-        )
-        button(java_control, "检测", self._detect_java, width=68, height=30).pack(
-            side="left", padx=(6, 0)
-        )
-        self._section_row(game_card.body, "游戏 Java", "", java_control)
+
+        def _java_control(row):
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            self.java_combo = Combo(
+                frame,
+                variable=self.java_var,
+                values=[self.AUTO_JAVA, *self.app.java_choices()],
+                width=300,
+                command=lambda _value: self._update_java_hint(),
+            )
+            self.java_combo.pack(side="left")
+            button(frame, "…", self._browse_java, width=38, height=30).pack(
+                side="left", padx=(6, 0)
+            )
+            button(frame, "检测", self._detect_java, width=68, height=30).pack(
+                side="left", padx=(6, 0)
+            )
+            return frame
+
+        self._section_row(game_card.body, "游戏 Java", "", _java_control)
         self.java_hint_var = tk.StringVar(value="")
         self.java_hint_label = ctk.CTkLabel(
             game_card.body,
@@ -520,49 +528,54 @@ class VersionsPage(Page):
         )
         self.java_hint_label.pack(fill="x", padx=14, pady=(0, 6))
 
-        memory_control = ctk.CTkFrame(game_card.body, fg_color="transparent")
         self.memory_var = tk.StringVar()
-        ctk.CTkEntry(memory_control, textvariable=self.memory_var, width=110).pack(side="left")
-        button(memory_control, "−", lambda: self._step_memory(-512), width=34, height=30).pack(
-            side="left", padx=(8, 0)
-        )
-        button(memory_control, "+", lambda: self._step_memory(512), width=34, height=30).pack(
-            side="left", padx=(4, 0)
-        )
-        ctk.CTkLabel(
-            memory_control,
-            text="MB",
-            text_color=theme.MUTED,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).pack(side="left", padx=(8, 0))
-        self._section_row(game_card.body, "游戏内存", "按需分配，建议 4–8 GB", memory_control)
 
-        size_control = ctk.CTkFrame(game_card.body, fg_color="transparent")
+        def _memory_control(row):
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            ctk.CTkEntry(frame, textvariable=self.memory_var, width=100).pack(side="left")
+            button(frame, "−", lambda: self._step_memory(-512), width=32, height=30).pack(
+                side="left", padx=(8, 0)
+            )
+            button(frame, "+", lambda: self._step_memory(512), width=32, height=30).pack(
+                side="left", padx=(4, 0)
+            )
+            ctk.CTkLabel(
+                frame,
+                text="MB",
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ).pack(side="left", padx=(8, 0))
+            return frame
+
+        self._section_row(game_card.body, "游戏内存", "按需分配，建议 4–8 GB", _memory_control)
+
         self.width_var = tk.StringVar()
         self.height_var = tk.StringVar()
-        ctk.CTkEntry(size_control, textvariable=self.width_var, width=80).pack(side="left")
-        ctk.CTkLabel(
-            size_control,
-            text="×",
-            text_color=theme.MUTED,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).pack(side="left", padx=6)
-        ctk.CTkEntry(size_control, textvariable=self.height_var, width=80).pack(side="left")
-        self._section_row(game_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", size_control)
+
+        def _size_control(row):
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            ctk.CTkEntry(frame, textvariable=self.width_var, width=80).pack(side="left")
+            ctk.CTkLabel(
+                frame,
+                text="×",
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ).pack(side="left", padx=6)
+            ctk.CTkEntry(frame, textvariable=self.height_var, width=80).pack(side="left")
+            return frame
+
+        self._section_row(game_card.body, "游戏窗口尺寸", "留空则使用游戏默认值", _size_control)
 
         self.log_window_var = tk.BooleanVar(value=True)
-        switch = ctk.CTkSwitch(
-            game_card.body,
-            text="",
-            variable=self.log_window_var,
-            onvalue=True,
-            offvalue=False,
-        )
+
+        def _log_switch(row):
+            return ctk.CTkSwitch(row, text="", variable=self.log_window_var)
+
         self._section_row(
             game_card.body,
             "启动时打开日志窗口",
             "每次启动都弹一个独立日志窗口，方便看崩溃信息",
-            switch,
+            _log_switch,
         )
 
         # ---------------- 自动安装 ----------------
@@ -588,23 +601,28 @@ class VersionsPage(Page):
 
         repair_card = Card(install, "维护")
         repair_card.pack(fill="x", padx=4, pady=(0, 10))
-        self.uninstall_loader_button = button(
-            repair_card.body, "卸载加载器", self._uninstall_loader, width=120
-        )
+        def _uninstall_control(row):
+            self.uninstall_loader_button = button(
+                row, "卸载加载器", self._uninstall_loader, width=110
+            )
+            return self.uninstall_loader_button
+
         self._section_row(
             repair_card.body,
             "卸载加载器",
             "把实例还原成原版（保留存档和 mods）",
-            self.uninstall_loader_button,
+            _uninstall_control,
         )
-        self.repair_button = button(
-            repair_card.body, "补全文件", self._repair, width=120
-        )
+
+        def _repair_control(row):
+            self.repair_button = button(row, "补全文件", self._repair, width=110)
+            return self.repair_button
+
         self._section_row(
             repair_card.body,
             "补全缺失文件",
             "黑屏 / 缺贴图 / 没声音时用，只补缺的文件",
-            self.repair_button,
+            _repair_control,
         )
 
         # ---------------- 浏览 ----------------
@@ -622,27 +640,29 @@ class VersionsPage(Page):
         )
         for text, folder in browse_items:
             if folder is None:
-                if text == "日志窗口":
-                    action = self._open_log
-                else:
-                    action = self._open_version_dir
+                action = self._open_log if text == "日志窗口" else self._open_version_dir
             else:
                 action = lambda name=folder: self._browse(name)
-            open_button = button(browse_card.body, "打开", action, width=90)
-            self._section_row(browse_card.body, text, "", open_button)
+            self._section_row(
+                browse_card.body,
+                text,
+                "",
+                control_factory=lambda row, action=action: button(
+                    row, "打开", action, width=90
+                ),
+            )
 
         # ---------------- 管理 ----------------
         manage = self._detail_sections["manage"]
         manage_card = Card(manage, "危险操作")
         manage_card.pack(fill="x", padx=4, pady=(0, 10))
-        delete_button = button(
-            manage_card.body, "删除这个实例", self._delete_version, danger=True, width=140
-        )
         self._section_row(
             manage_card.body,
             "删除实例",
             "会删掉整个 versions/<实例> 目录，存档也会一起没，删之前先备份",
-            delete_button,
+            control_factory=lambda row: button(
+                row, "删除这个实例", self._delete_version, danger=True, width=140
+            ),
         )
 
         self._show_detail_section("basic")
@@ -1151,79 +1171,154 @@ class AccountsPage(Page):
 class SettingsPage(Page):
     title = "设置"
 
-    def __init__(self, parent: tk.Misc, app) -> None:
-        import customtkinter as ctk
+    def _row(self, parent, title: str, subtitle: str = "", control_factory=None):
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", padx=14, pady=6)
+        text = ctk.CTkFrame(row, fg_color="transparent")
+        text.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(
+            text,
+            text=title,
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
+        ).pack(fill="x")
+        if subtitle:
+            ctk.CTkLabel(
+                text,
+                text=subtitle,
+                anchor="w",
+                justify="left",
+                wraplength=520,
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
+            ).pack(fill="x", pady=(2, 0))
+        if control_factory is not None:
+            control = control_factory(row)
+            control.pack(side="right", padx=(14, 0))
+        return row
 
-        from gelauncher.ui.widgets import Card, Combo, label
+    def _build_shell(self) -> None:
+        from gelauncher.ui.widgets import Card
 
-        super().__init__(parent, app)
-        self.columnconfigure(0, weight=1)
-
-        from gelauncher.ui import theme
-
-        body = ctk.CTkFrame(self, fg_color=theme.BG)
+        body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=0, column=0, sticky="nsew")
-        body.columnconfigure(0, weight=1)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+        body.columnconfigure(1, weight=1)
+        body.rowconfigure(0, weight=1)
 
-        general = Card(body, "默认值（版本没单独设置时用）")
-        general.grid(row=0, column=0, sticky="ew")
-        form = general.body
-        form.columnconfigure(1, weight=1)
+        nav = ctk.CTkFrame(body, corner_radius=10, fg_color=theme.CARD, width=170)
+        nav.grid(row=0, column=0, sticky="ns", padx=(0, 10))
+        nav.grid_propagate(False)
+        nav.columnconfigure(0, weight=1)
+        nav.rowconfigure(5, weight=1)
+        self._setting_nav_buttons: dict[str, ctk.CTkButton] = {}
+        for index, (key, text) in enumerate(
+            (
+                ("general", "常规"),
+                ("appearance", "外观"),
+                ("env", "环境"),
+                ("about", "关于"),
+            ),
+            start=0,
+        ):
+            nav_button = ctk.CTkButton(
+                nav,
+                text=text,
+                anchor="w",
+                height=38,
+                corner_radius=8,
+                fg_color="transparent",
+                text_color=theme.TEXT,
+                hover_color=("#e2e8f0", "#2a2f37"),
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=13),
+                command=lambda name=key: self._show_section(name),
+            )
+            nav_button.grid(row=index, column=0, sticky="ew", padx=8, pady=3)
+            self._setting_nav_buttons[key] = nav_button
 
-        label(form, "最大内存").grid(row=0, column=0, sticky="w", pady=6)
-        memory_row = ctk.CTkFrame(form, fg_color="transparent")
-        memory_row.grid(row=0, column=1, sticky="w", pady=6)
+        content = ctk.CTkFrame(body, fg_color="transparent")
+        content.grid(row=0, column=1, sticky="nsew")
+        content.columnconfigure(0, weight=1)
+        content.rowconfigure(0, weight=1)
+        self._setting_sections: dict[str, ctk.CTkScrollableFrame] = {}
+        for key in ("general", "appearance", "env", "about"):
+            section = ctk.CTkScrollableFrame(content, fg_color="transparent", corner_radius=0)
+            section.grid(row=0, column=0, sticky="nsew")
+            section.grid_remove()
+            self._setting_sections[key] = section
+
+        # 常规
+        general = self._setting_sections["general"]
+        general_card = Card(general, "默认值（版本没单独设置时用）")
+        general_card.pack(fill="x", padx=4, pady=(0, 10))
         self.memory_var = tk.StringVar()
-        ctk.CTkEntry(
-            memory_row,
-            textvariable=self.memory_var,
-            width=110,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).grid(row=0, column=0, sticky="w")
-        label(memory_row, "MB", muted=True).grid(row=0, column=1, padx=(8, 0))
 
-        label(form, "Java 路径").grid(row=1, column=0, sticky="w", pady=6)
-        java_row = ctk.CTkFrame(form, fg_color="transparent")
-        java_row.grid(row=1, column=1, sticky="ew", pady=6)
-        java_row.columnconfigure(0, weight=1)
+        def _memory_control(row):
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            ctk.CTkEntry(frame, textvariable=self.memory_var, width=100).pack(side="left")
+            ctk.CTkLabel(
+                frame,
+                text="MB",
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ).pack(side="left", padx=(8, 0))
+            return frame
+
+        self._row(general_card.body, "最大内存", "", _memory_control)
+
         self.java_var = tk.StringVar()
-        self.java_combo = Combo(
-            java_row, variable=self.java_var, values=self.app.java_choices(), width=420
-        )
-        self.java_combo.grid(row=0, column=0, sticky="ew")
-        ctk.CTkButton(java_row, text="…", width=40, command=self.browse_java).grid(
-            row=0, column=1, padx=(6, 0)
-        )
-        ctk.CTkButton(java_row, text="检测", width=64, command=self.detect_java).grid(
-            row=0, column=2, padx=(6, 0)
+
+        def _java_control(row):
+            from gelauncher.ui.widgets import Combo, button
+
+            frame = ctk.CTkFrame(row, fg_color="transparent")
+            self.java_combo = Combo(
+                frame, variable=self.java_var, values=self.app.java_choices(), width=320
+            )
+            self.java_combo.pack(side="left")
+            button(frame, "…", self.browse_java, width=38, height=30).pack(
+                side="left", padx=(6, 0)
+            )
+            button(frame, "检测", self.detect_java, width=68, height=30).pack(
+                side="left", padx=(6, 0)
+            )
+            return frame
+
+        self._row(
+            general_card.body,
+            "Java 路径",
+            "新实例默认用这个；实例自己设置过就以实例为准",
+            _java_control,
         )
 
         self.log_window_var = tk.BooleanVar(value=True)
-        ctk.CTkCheckBox(
-            form,
-            text="默认在启动时打开独立日志窗口",
-            variable=self.log_window_var,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
+        self._row(
+            general_card.body,
+            "默认打开日志窗口",
+            "可在每个实例里单独覆盖",
+            lambda row: ctk.CTkSwitch(row, text="", variable=self.log_window_var),
+        )
 
-        label(form, "下载源").grid(row=3, column=0, sticky="w", pady=6)
         from gelauncher.core.net import SOURCE_MODE_LABELS, SOURCE_MODES
 
         self.source_labels = {SOURCE_MODE_LABELS[mode]: mode for mode in SOURCE_MODES}
         self.source_var = tk.StringVar()
-        self.source_combo = Combo(
-            form,
-            variable=self.source_var,
-            values=list(self.source_labels),
-            width=240,
-        )
-        self.source_combo.grid(row=3, column=1, sticky="w", pady=6)
 
-        appearance = Card(body, "外观")
-        appearance.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        appearance_form = appearance.body
-        appearance_form.columnconfigure(1, weight=1)
-        label(appearance_form, "主题色").grid(row=0, column=0, sticky="w", pady=6)
+        def _source_control(row):
+            from gelauncher.ui.widgets import Combo
+
+            self.source_combo = Combo(
+                row, variable=self.source_var, values=list(self.source_labels), width=300
+            )
+            return self.source_combo
+
+        self._row(general_card.body, "下载源", "自动 = 官方优先，慢/不通时切镜像", _source_control)
+
+        # 外观
+        appearance = self._setting_sections["appearance"]
+        appearance_card = Card(appearance, "主题")
+        appearance_card.pack(fill="x", padx=4, pady=(0, 10))
         from gelauncher.ui import theme as theme_module
 
         self.appearance_labels = dict(theme_module.MODE_LABELS)
@@ -1234,74 +1329,117 @@ class SettingsPage(Page):
                 if mode == self.app.config.appearance
             )
         )
-        self.appearance_combo = Combo(
-            appearance_form,
-            variable=self.appearance_var,
-            values=list(self.appearance_labels),
-            width=180,
-            command=self._apply_appearance,
-        )
-        self.appearance_combo.grid(row=0, column=1, sticky="w", pady=6)
 
-        env = Card(body, "环境")
-        env.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        def _appearance_control(row):
+            from gelauncher.ui.widgets import Combo
+
+            self.appearance_combo = Combo(
+                row,
+                variable=self.appearance_var,
+                values=list(self.appearance_labels),
+                width=180,
+                command=self._apply_appearance,
+            )
+            return self.appearance_combo
+
+        self._row(appearance_card.body, "主题色", "跟随系统会随 Windows 深色模式自动切换", _appearance_control)
+
+        # 环境
+        env = self._setting_sections["env"]
+        env_card = Card(env, "环境")
+        env_card.pack(fill="x", padx=4, pady=(0, 10))
         self.env_var = tk.StringVar(value="")
-        self.env_label = label(env.body, muted=True, textvariable=self.env_var, wraplength=820)
-        self.env_label.grid(row=0, column=0, sticky="w")
-        self.java_list_var = tk.StringVar(value="")
-        self.java_list_label = label(
-            env.body, muted=True, textvariable=self.java_list_var, wraplength=820
+        self.env_label = ctk.CTkLabel(
+            env_card.body,
+            textvariable=self.env_var,
+            anchor="w",
+            justify="left",
+            text_color=theme.MUTED,
+            wraplength=760,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
-        self.java_list_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.env_label.pack(fill="x", padx=14, pady=(6, 2))
+        self.java_list_var = tk.StringVar(value="")
+        self.java_list_label = ctk.CTkLabel(
+            env_card.body,
+            textvariable=self.java_list_var,
+            anchor="w",
+            justify="left",
+            text_color=theme.MUTED,
+            wraplength=760,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        )
+        self.java_list_label.pack(fill="x", padx=14, pady=(2, 8))
 
         def _refit_env(event) -> None:
-            from gelauncher.ui import theme
+            from gelauncher.ui import theme as theme_mod
 
-            # CTk 的 wraplength 会再乘一次 DPI 缩放，这里先换算回逻辑像素
-            wrap = max(int(event.width / theme.scale_factor()) - 12, 260)
+            wrap = max(int(event.width / theme_mod.scale_factor()) - 24, 260)
             self.env_label.configure(wraplength=wrap)
             self.java_list_label.configure(wraplength=wrap)
 
-        env.body.bind("<Configure>", _refit_env, add="+")
+        env_card.body.bind("<Configure>", _refit_env, add="+")
 
-        about = Card(body, "关于")
-        about.grid(row=3, column=0, sticky="ew", pady=(10, 0))
-        about_form = about.body
-        about_form.columnconfigure(1, weight=1)
-        label(about_form, "启动器版本").grid(row=0, column=0, sticky="w", pady=4)
-        ctk.CTkLabel(
-            about_form,
-            text=f"Ge 启动器 {__version__}",
-            anchor="w",
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12, weight="bold"),
-        ).grid(row=0, column=1, sticky="w", pady=4)
+        # 关于
+        about = self._setting_sections["about"]
+        about_card = Card(about, "关于")
+        about_card.pack(fill="x", padx=4, pady=(0, 10))
+        self._row(
+            about_card.body,
+            "启动器版本",
+            "",
+            lambda row: ctk.CTkLabel(
+                row,
+                text=f"Ge 启动器 {__version__}",
+                anchor="e",
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12, weight="bold"),
+            ),
+        )
+        self._row(
+            about_card.body,
+            "GitHub 仓库",
+            "https://github.com/StudentBuilding-Studio/GeLauncher",
+            lambda row: ctk.CTkButton(
+                row,
+                text="打开 GitHub 仓库",
+                width=170,
+                height=32,
+                corner_radius=8,
+                fg_color=theme.ACCENT,
+                hover_color=theme.ACCENT_HOVER,
+                text_color="#ffffff",
+                command=self._open_repo,
+            ),
+        )
 
-        label(about_form, "GitHub 仓库").grid(row=1, column=0, sticky="w", pady=4)
-        label(
-            about_form,
-            muted=True,
-            text="https://github.com/StudentBuilding-Studio/GeLauncher",
-        ).grid(row=1, column=1, sticky="w", pady=4)
+        self._show_section("general")
 
-        ctk.CTkButton(
-            about_form,
-            text="打开 GitHub 仓库",
-            width=170,
-            height=34,
-            corner_radius=8,
-            fg_color=theme.ACCENT,
-            hover_color=theme.ACCENT_HOVER,
-            text_color="#ffffff",
-            command=self._open_repo,
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
-
-        # 即时保存：改任何一项都自动落盘
+        # 即时保存
         self._loading = False
         self._save_job = None
         for variable in (self.memory_var, self.java_var):
             variable.trace_add("write", lambda *_: self._schedule_save())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
         self.source_var.trace_add("write", lambda *_: self._schedule_save())
+
+    def _show_section(self, name: str) -> None:
+        if name not in self._setting_sections:
+            return
+        for key, section in self._setting_sections.items():
+            if key == name:
+                section.grid()
+            else:
+                section.grid_remove()
+        for key, nav_button in self._setting_nav_buttons.items():
+            active = key == name
+            nav_button.configure(
+                fg_color=theme.ACCENT if active else "transparent",
+                text_color="#ffffff" if active else theme.TEXT,
+            )
+
+    def __init__(self, parent: tk.Misc, app) -> None:
+        super().__init__(parent, app)
+        self._build_shell()
 
     def on_show(self) -> None:
         config = self.app.config
@@ -1349,6 +1487,23 @@ class SettingsPage(Page):
                 "\n".join(f"Java {major}（{path}）" for major, path in runtimes)
             )
 
+    def _open_repo(self) -> None:
+        import webbrowser
+
+        url = "https://github.com/StudentBuilding-Studio/GeLauncher"
+        try:
+            webbrowser.open(url)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("打不开浏览器", f"{url}\n{exc}")
+
+    def _apply_appearance(self, _value=None) -> None:
+        from gelauncher.ui import theme
+
+        mode = self.appearance_labels.get(self.appearance_var.get(), "system")
+        theme.set_mode(mode)
+        self.app.config.appearance = mode
+        self._schedule_save()
+
     def _schedule_save(self) -> None:
         if getattr(self, "_loading", False):
             return
@@ -1377,20 +1532,3 @@ class SettingsPage(Page):
             self.appearance_var.get(), config.appearance
         )
         config.save()
-
-    def _open_repo(self) -> None:
-        import webbrowser
-
-        url = "https://github.com/StudentBuilding-Studio/GeLauncher"
-        try:
-            webbrowser.open(url)
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("打不开浏览器", f"{url}\n{exc}")
-
-    def _apply_appearance(self, _value=None) -> None:
-        from gelauncher.ui import theme
-
-        mode = self.appearance_labels.get(self.appearance_var.get(), "system")
-        theme.set_mode(mode)
-        self.app.config.appearance = mode
-        self._schedule_save()
