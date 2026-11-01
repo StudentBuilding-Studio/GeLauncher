@@ -76,6 +76,26 @@ class LaunchPlan:
         return " ".join(self.command)
 
 
+def _natives_target_dir(version: VersionJson, base_dir: Path) -> Path:
+    """决定 natives 解压到哪个目录（26.x 起需要放进 ``<natives>/java`` 子目录）。
+
+    1.21 及更早：``-Djava.library.path=${natives_directory}``，解到 base 就行。
+    26.3 开始：``-Djava.library.path=${natives_directory}/java``，natives jar 内部也变成
+    ``windows/x64/org/lwjgl/...`` 这种嵌套结构。这时必须解到 ``base/java``，
+    否则 java.library.path 指向不存在的目录，游戏报
+    ``Failed to locate library: lwjgl.dll``（实测 26.3 就是这个问题）。
+    """
+    prefix = "-Djava.library.path=${natives_directory}/"
+    for argument in version.jvm_arguments:
+        if not isinstance(argument, str) or not argument.startswith(prefix):
+            continue
+        sub = argument[len(prefix) :].split("${", 1)[0].strip("/\\")
+        if not sub or ".." in Path(sub).parts or Path(sub).is_absolute():
+            break
+        return base_dir / sub
+    return base_dir
+
+
 def _missing(paths: Iterable[Path]) -> list[Path]:
     return [path for path in paths if not path.is_file()]
 
@@ -170,9 +190,12 @@ def prepare(options: LaunchOptions) -> LaunchPlan:
     if not options.dry_run:
         game_directory.mkdir(parents=True, exist_ok=True)
     natives_dir = layout.natives_dir(version_id, env)
+    natives_target = _natives_target_dir(version, natives_dir)
     if not options.dry_run:
         try:
-            extract_natives(native_jars, natives_dir, native_excludes, force=options.force_natives)
+            extract_natives(
+                native_jars, natives_target, native_excludes, force=options.force_natives
+            )
         except (NativesError, OSError) as exc:
             raise LaunchError(f"解压 natives 失败：{exc}") from exc
 

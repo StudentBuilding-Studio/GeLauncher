@@ -346,15 +346,11 @@ class LauncherApp:
 
     def install_loader(self, base_version: str, kind: str) -> None:
         name = "Fabric" if kind == "fabric" else "Forge"
-        if kind == "fabric":
-            question = (
-                f"把 Fabric 装进现有的 {base_version}？\n\n"
-                "版本名不变，之后启动这个版本就是 Fabric；原版 JSON 会备份，可以随时卸载。"
-            )
-        else:
-            question = f"给 {base_version} 装 {name}？（Forge 会单独生成一个新版本）"
-        if not messagebox.askyesno(f"装 {name}", question):
-            return
+        # Fabric 是"装进现有版本"的安全操作（原版 JSON 有备份、可卸载），
+        # 不再弹确认框；Forge 会生成新版本，仍然问一句。
+        if kind != "fabric":
+            if not messagebox.askyesno(f"装 {name}", f"给 {base_version} 装 {name}？"):
+                return
         log_window = self.open_log_window(base_version)
         log_window.start_session(f"给 {base_version} 安装 {name}")
         log_window.append(f"[LAUNCHER] 安装目标目录：{self.layout.root}")
