@@ -777,10 +777,16 @@ class LauncherApp:
         if not target.is_dir():
             messagebox.showinfo("找不到版本目录", str(target))
             return
-        if not messagebox.askyesno(
-            "删除版本",
-            f"确定删除 {version_id}？\n\n会删掉整个版本目录：\n{target}\n\n"
-            "存档在 versions/<id>/saves 里的话也会一起没，删之前先备份。",
+        from gelauncher.ui.confirm import ask_danger
+
+        if not ask_danger(
+            self.root,
+            title="删除版本",
+            message=(
+                f"确定删除 {version_id}？\n\n会删掉整个版本目录：\n{target}\n\n"
+                "存档在 versions/<id>/saves 里的话也会一起没，删之前先备份。"
+            ),
+            confirm_text="删除",
         ):
             return
         try:

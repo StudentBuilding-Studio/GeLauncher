@@ -372,9 +372,12 @@ class VersionsPage(Page):
                 row=index, column=1, sticky="w", pady=2
             )
 
-        ttk.Button(info, text="删除这个实例…", command=self._delete_version).grid(
-            row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(12, 0)
-        )
+        ttk.Button(
+            info,
+            text="删除这个实例…",
+            style="Danger.TButton",
+            command=self._delete_version,
+        ).grid(row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(12, 0))
 
         settings = ttk.LabelFrame(body, text="实例设置", padding=10)
         settings.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
@@ -771,7 +774,7 @@ class AccountsPage(Page):
         button(actions.body, "设为当前账号", self.use_selected).grid(
             row=1, column=0, sticky="ew", pady=(8, 0)
         )
-        button(actions.body, "删除选中账号", self.remove_selected).grid(
+        button(actions.body, "删除选中账号", self.remove_selected, danger=True).grid(
             row=2, column=0, sticky="ew", pady=(6, 0)
         )
 

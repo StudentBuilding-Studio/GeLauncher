@@ -74,6 +74,17 @@ def style_ttk(root) -> None:
         background=[("active", ACCENT_HOVER), ("pressed", ACCENT_HOVER)],
         foreground=[("disabled", "#e5e7eb")],
     )
+    style.configure(
+        "Danger.TButton",
+        background="#dc2626",
+        foreground="#ffffff",
+        padding=(12, 8),
+    )
+    style.map(
+        "Danger.TButton",
+        background=[("active", "#b91c1c"), ("pressed", "#991b1b")],
+        foreground=[("disabled", "#f3f4f6")],
+    )
     style.configure("Nav.TButton", anchor="w", padding=(12, 8))
     style.configure("Status.TLabel", background=BG, foreground=MUTED, padding=(4, 4))
 

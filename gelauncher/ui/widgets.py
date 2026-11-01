@@ -74,11 +74,15 @@ def label(master, text: str = "", *, muted: bool = False, **kwargs) -> ctk.CTkLa
     return ctk.CTkLabel(master, **kwargs)
 
 
-def button(master, text: str, command, *, accent: bool = False, **kwargs) -> ctk.CTkButton:
+def button(master, text: str, command, *, accent: bool = False, danger: bool = False, **kwargs) -> ctk.CTkButton:
     kwargs.setdefault("corner_radius", 8)
     kwargs.setdefault("height", 34)
     kwargs.setdefault("font", ctk.CTkFont(family="Microsoft YaHei UI", size=12))
-    if accent:
+    if danger:
+        kwargs.setdefault("fg_color", "#dc2626")
+        kwargs.setdefault("hover_color", "#b91c1c")
+        kwargs.setdefault("text_color", "#ffffff")
+    elif accent:
         kwargs.setdefault("fg_color", theme.ACCENT)
         kwargs.setdefault("hover_color", theme.ACCENT_HOVER)
         kwargs.setdefault("text_color", "#ffffff")
