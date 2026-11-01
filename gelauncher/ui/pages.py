@@ -480,7 +480,9 @@ class VersionsPage(Page):
         )
         self.info_vars["库"].set(str(len(version.libraries)))
         self.info_vars["隔离目录"].set(str(self.app.layout.version_dir(version_id)))
-        self.detail_status.set(f"Java {version.java_version or '?'}")
+        self.detail_status.set(
+            f"需要 Java {version.java_version}" if version.java_version else "未标注 Java 版本"
+        )
         # 加载器是"装进现有版本"的：装过就禁用安装按钮，任何一个都可以卸载还原
         from gelauncher.core.install_loader import LOADER_LABELS, loader_of
 
