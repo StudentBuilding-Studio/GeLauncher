@@ -74,3 +74,16 @@ def test_read_profile(tmp_path):
     assert result.version == "47.1.84"
     assert result.processors and result.data
     assert result.version_json["mainClass"].startswith("cpw.mods")
+
+def test_artifact_urls_include_central_fallback():
+    from gelauncher.core.forge_processors import _artifact_urls
+
+    urls = _artifact_urls(
+        "https://maven.minecraftforge.net/com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar",
+        "com/nothome/javaxdelta/2.0.1/javaxdelta-2.0.1.jar",
+    )
+    assert urls[0].startswith("https://maven.minecraftforge.net/")
+    assert "https://bmclapi2.bangbang93.com/maven/" in urls[1]
+    assert "https://mirrors.cloud.tencent.com/" in urls[2]
+    assert "https://repo1.maven.org/maven2/" in urls[3]
+    assert len(urls) == len(set(urls))

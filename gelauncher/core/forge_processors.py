@@ -30,6 +30,41 @@ from .net import DownloadJob, DownloadReport, Fetcher
 
 ProgressHook = Callable[[str, str], None]
 
+#: processor 依赖的额外兜底源（javaxdelta 这类第三方库只在 Maven Central 有）
+TENCENT_MAVEN = "https://mirrors.cloud.tencent.com/nexus/repository/maven-public/"
+MAVEN_CENTRAL = "https://repo1.maven.org/maven2/"
+BMCLAPI_MAVEN = "https://bmclapi2.bangbang93.com/maven/"
+NEOFORGE_CDN = "https://neoforged.forgecdn.net/"
+
+
+def _artifact_urls(url: str | None, path: str) -> list[str]:
+    """给一个库文件列出所有可尝试的下载地址（去重保序）。"""
+    urls: list[str] = []
+    if url:
+        urls.append(url)
+        if url.startswith("https://maven.neoforged.net/"):
+            urls.append(url.replace("https://maven.neoforged.net/", NEOFORGE_CDN))
+        for host in (
+            "https://maven.minecraftforge.net/",
+            "https://libraries.minecraft.net/",
+            "https://maven.fabricmc.net/",
+            "https://maven.neoforged.net/",
+        ):
+            if url.startswith(host):
+                urls.append(BMCLAPI_MAVEN + url[len(host) :])
+                break
+    # 第三方依赖（如 com.nothome:javaxdelta）只在 Central / 国内镜像有
+    urls.append(TENCENT_MAVEN + path)
+    urls.append(MAVEN_CENTRAL + path)
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in urls:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
 
 class ProcessorError(RuntimeError):
     """processors 安装失败。"""
@@ -213,17 +248,20 @@ def _download_profile_libraries(
         artifact = (entry.get("downloads") or {}).get("artifact") or {}
         path = artifact.get("path")
         url = artifact.get("url")
-        if not path or not url:
+        if not path:
+            name = entry.get("name") or ""
+            try:
+                path = artifact_relative_path(name)
+            except Exception:  # noqa: BLE001 - 坐标不完整就跳过
+                continue
+        if not path:
             continue
         destination = layout.libraries_dir / path
         if destination.is_file():
             continue
-        urls = [url]
-        if "maven.neoforged.net/" in url:
-            urls.append(url.replace("https://maven.neoforged.net/", "https://neoforged.forgecdn.net/"))
         jobs.append(
             DownloadJob(
-                urls=urls,
+                urls=_artifact_urls(url, path),
                 destination=destination,
                 sha1=artifact.get("sha1"),
                 size=artifact.get("size"),

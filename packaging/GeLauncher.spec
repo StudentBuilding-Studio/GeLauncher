@@ -23,7 +23,7 @@ a = Analysis(
     hiddenimports=["darkdetect"],
     hookspath=[],
     runtime_hooks=[],
-    excludes=["pytest"],
+    excludes=["pytest", "PIL", "Pillow"],
     noarchive=False,
 )
 
