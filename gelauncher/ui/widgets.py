@@ -1,0 +1,89 @@
+"""几个复用的 CTk 小部件。"""
+
+from __future__ import annotations
+
+import tkinter as tk
+
+import customtkinter as ctk
+
+from . import theme
+
+
+class Combo(ctk.CTkComboBox):
+    """CTkComboBox + Treeview 风格的 cget("values")/configure(values=...)，方便测试和复用。"""
+
+    def __init__(self, master, *, values=(), variable=None, width=200, **kwargs) -> None:
+        self._values = list(values)
+        super().__init__(
+            master,
+            values=self._values,
+            variable=variable,
+            width=width,
+            **kwargs,
+        )
+
+    def configure(self, **kwargs):  # noqa: A003
+        if "values" in kwargs:
+            self._values = list(kwargs.pop("values"))
+            kwargs["values"] = self._values
+        return super().configure(**kwargs)
+
+    config = configure
+
+    def cget(self, key):
+        if key == "values":
+            return tuple(self._values)
+        return super().cget(key)
+
+    def bind(self, sequence, func, add=None):  # noqa: A003
+        if sequence == "<<ComboboxSelected>>":
+            return super().bind(sequence, lambda _e: func(_e), add)
+        return super().bind(sequence, func, add)
+
+
+class Card(ctk.CTkFrame):
+    """带标题的卡片容器；真正的控件放进 ``card.body``。"""
+
+    def __init__(self, master, title: str, **kwargs) -> None:
+        kwargs.setdefault("corner_radius", 10)
+        kwargs.setdefault("fg_color", theme.CARD)
+        kwargs.setdefault("border_width", 1)
+        kwargs.setdefault("border_color", theme.BORDER)
+        super().__init__(master, **kwargs)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
+        ctk.CTkLabel(
+            self,
+            text=title,
+            anchor="w",
+            text_color=theme.MUTED,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).grid(row=0, column=0, sticky="ew", padx=14, pady=(10, 4))
+        self.body = ctk.CTkFrame(self, fg_color="transparent")
+        self.body.grid(row=1, column=0, sticky="nsew", padx=10, pady=(0, 10))
+        self.body.columnconfigure(0, weight=1)
+
+
+def label(master, text: str = "", *, muted: bool = False, **kwargs) -> ctk.CTkLabel:
+    kwargs.setdefault("anchor", "w")
+    kwargs.setdefault("justify", "left")
+    if "text" not in kwargs and "textvariable" not in kwargs:
+        kwargs["text"] = text
+    kwargs.setdefault("text_color", theme.MUTED if muted else theme.TEXT)
+    kwargs.setdefault("font", ctk.CTkFont(family="Microsoft YaHei UI", size=12))
+    return ctk.CTkLabel(master, **kwargs)
+
+
+def button(master, text: str, command, *, accent: bool = False, **kwargs) -> ctk.CTkButton:
+    kwargs.setdefault("corner_radius", 8)
+    kwargs.setdefault("height", 34)
+    kwargs.setdefault("font", ctk.CTkFont(family="Microsoft YaHei UI", size=12))
+    if accent:
+        kwargs.setdefault("fg_color", theme.ACCENT)
+        kwargs.setdefault("hover_color", theme.ACCENT_HOVER)
+        kwargs.setdefault("text_color", "#ffffff")
+    else:
+        kwargs.setdefault("fg_color", "#f3f4f6")
+        kwargs.setdefault("hover_color", "#e5e7eb")
+        kwargs.setdefault("text_color", theme.TEXT)
+    return ctk.CTkButton(master, text=text, command=command, **kwargs)

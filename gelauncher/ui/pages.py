@@ -82,19 +82,16 @@ class VersionsPage(Page):
             row=0, column=1, sticky="w", padx=10
         )
 
-        body = ttk.Frame(self.list_frame)
+        body = ttk.Panedwindow(self.list_frame, orient="horizontal")
         body.grid(row=1, column=0, sticky="nsew")
         self.list_frame.rowconfigure(1, weight=1)
-        body.columnconfigure(0, weight=0, minsize=230)
-        body.columnconfigure(1, weight=1)
-        body.rowconfigure(0, weight=1)
 
-        self._build_dir_list(body)
-
+        dir_frame = self._build_dir_list(body)
         versions = ttk.LabelFrame(body, text="已安装的版本", padding=6)
-        versions.grid(row=0, column=1, sticky="nsew")
         versions.columnconfigure(0, weight=1)
         versions.rowconfigure(1, weight=1)
+        body.add(dir_frame, weight=1)
+        body.add(versions, weight=4)
 
         # 过滤 / 安装原版 / 刷新 都放进"已安装的版本"板块里
         toolbar = ttk.Frame(versions)
@@ -131,9 +128,8 @@ class VersionsPage(Page):
         )
         self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew")
 
-    def _build_dir_list(self, parent) -> None:
+    def _build_dir_list(self, parent):
         frame = ttk.LabelFrame(parent, text="目录列表", padding=6)
-        frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
@@ -160,6 +156,7 @@ class VersionsPage(Page):
         ttk.Button(frame, text="从列表移除", command=self._remove_dir).grid(
             row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
         )
+        return frame
 
     def refresh_dirs(self) -> None:
         self.dir_tree.delete(*self.dir_tree.get_children())
@@ -694,65 +691,73 @@ class AccountsPage(Page):
     title = "账号"
 
     def __init__(self, parent: tk.Misc, app) -> None:
+        import customtkinter as ctk
+
+        from gelauncher.ui.instance_list import InstanceList
+        from gelauncher.ui.widgets import Card, button, label
+
         super().__init__(parent, app)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
         self._entries: dict[str, dict] = {}
 
-        header = ttk.Frame(self)
+        header = ctk.CTkFrame(self, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
-        ttk.Label(header, text="账号", font=("Microsoft YaHei UI", 11, "bold")).grid(
-            row=0, column=0, sticky="w"
-        )
+        ctk.CTkLabel(
+            header,
+            text="账号",
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=16, weight="bold"),
+        ).grid(row=0, column=0, sticky="w")
         self.current_var = tk.StringVar(value="")
-        ttk.Label(header, textvariable=self.current_var, foreground="#666").grid(
+        label(header, muted=True, textvariable=self.current_var).grid(
             row=0, column=1, sticky="e"
         )
 
-        body = ttk.Frame(self)
+        body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
-        body.columnconfigure(1, weight=0, minsize=230)
+        body.columnconfigure(1, weight=0, minsize=270)
         body.rowconfigure(0, weight=1)
 
-        tree_frame = ttk.LabelFrame(body, text="已添加的账号（● 表示当前）", padding=6)
-        tree_frame.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        tree_frame.columnconfigure(0, weight=1)
-        tree_frame.rowconfigure(0, weight=1)
-
-        self.tree = ttk.Treeview(
-            tree_frame, columns=("type", "uuid"), show="tree headings", selectmode="browse"
+        list_card = Card(body, "已添加的账号（● 表示当前）")
+        list_card.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        list_card.body.rowconfigure(0, weight=1)
+        self.tree = InstanceList(
+            list_card.body,
+            headers=("账号", "类型", "UUID"),
+            column_widths=(300, 90, 340),
+            on_row=lambda _iid: None,
+            on_double=lambda _iid: self.use_selected(),
         )
-        self.tree.heading("#0", text="账号")
-        self.tree.heading("type", text="类型")
-        self.tree.heading("uuid", text="UUID")
-        self.tree.column("#0", width=180, stretch=True)
-        self.tree.column("type", width=70, anchor="center", stretch=False)
-        self.tree.column("uuid", width=280)
         self.tree.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.bind("<Double-1>", self._on_double_click)
 
-        actions = ttk.LabelFrame(body, text="操作", padding=10)
+        actions = Card(body, "操作")
         actions.grid(row=0, column=1, sticky="nsew")
-        actions.columnconfigure(0, weight=1)
-
-        self.add_button = ttk.Menubutton(actions, text="添加账号 ▾")
-        self.add_menu = tk.Menu(self.add_button, tearoff=False)
-        self.add_menu.add_command(label="微软账号…", command=self.add_microsoft)
-        self.add_menu.add_command(label="离线账号…", command=self.add_offline)
-        self.add_button["menu"] = self.add_menu
+        self.add_button = button(actions.body, "添加账号 ▾", self._popup_add_menu, accent=True)
         self.add_button.grid(row=0, column=0, sticky="ew")
-
-        ttk.Button(actions, text="设为当前账号", command=self.use_selected).grid(
+        button(actions.body, "设为当前账号", self.use_selected).grid(
             row=1, column=0, sticky="ew", pady=(8, 0)
         )
-        ttk.Button(actions, text="删除选中账号", command=self.remove_selected).grid(
+        button(actions.body, "删除选中账号", self.remove_selected).grid(
             row=2, column=0, sticky="ew", pady=(6, 0)
         )
+
+        self._add_menu = tk.Menu(self, tearoff=False)
+        self._add_menu.add_command(label="微软账号…", command=self.add_microsoft)
+        self._add_menu.add_command(label="离线账号…", command=self.add_offline)
+
+    def _popup_add_menu(self) -> None:
+        try:
+            x = self.add_button.winfo_rootx()
+            y = self.add_button.winfo_rooty() + self.add_button.winfo_height()
+            self._add_menu.tk_popup(x, y)
+        finally:
+            try:
+                self._add_menu.grab_release()
+            except tk.TclError:
+                pass
 
     # ------------------------------------------------------------------
 
@@ -792,10 +797,6 @@ class AccountsPage(Page):
         if not selection:
             return None
         return self._entries.get(selection[0])
-
-    def _on_double_click(self, event) -> None:
-        if self.tree.identify_region(event.x, event.y) in ("tree", "cell"):
-            self.use_selected()
 
     # ------------------------------------------------------------------ 添加
 
@@ -848,8 +849,8 @@ class AccountsPage(Page):
             return
         name = entry["name"]
         kind = entry["kind"]
-        label = "微软账号" if kind == "msa" else "离线账号"
-        if not messagebox.askyesno("删除账号", f"删掉{label} {name}？"):
+        label_text = "微软账号" if kind == "msa" else "离线账号"
+        if not messagebox.askyesno("删除账号", f"删掉{label_text} {name}？"):
             return
         if kind == "msa":
             self.app.config.remove_msa_account(name)
@@ -857,7 +858,7 @@ class AccountsPage(Page):
             self.app.config.remove_account(name)
         self.app.config.save()
         self.refresh()
-        self.app.set_status(f"已删除{label} {name}")
+        self.app.set_status(f"已删除{label_text} {name}")
 
 
 # --------------------------------------------------------------------------- #
@@ -869,72 +870,87 @@ class SettingsPage(Page):
     title = "设置"
 
     def __init__(self, parent: tk.Misc, app) -> None:
+        import customtkinter as ctk
+
+        from gelauncher.ui.widgets import Card, Combo, label
+
         super().__init__(parent, app)
         self.columnconfigure(0, weight=1)
 
-        body = ttk.Frame(self)
+        body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=0, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
 
-        general = ttk.LabelFrame(body, text="默认值（版本没单独设置时用）", padding=10)
+        general = Card(body, "默认值（版本没单独设置时用）")
         general.grid(row=0, column=0, sticky="ew")
-        general.columnconfigure(1, weight=1)
+        form = general.body
+        form.columnconfigure(1, weight=1)
 
-        ttk.Label(general, text="最大内存").grid(row=0, column=0, sticky="w", pady=3)
-        row = ttk.Frame(general)
-        row.grid(row=0, column=1, sticky="ew", pady=3)
+        label(form, "最大内存").grid(row=0, column=0, sticky="w", pady=6)
+        memory_row = ctk.CTkFrame(form, fg_color="transparent")
+        memory_row.grid(row=0, column=1, sticky="w", pady=6)
         self.memory_var = tk.StringVar()
-        ttk.Spinbox(row, from_=512, to=32768, increment=512, textvariable=self.memory_var, width=10).grid(
-            row=0, column=0, sticky="w"
-        )
-        ttk.Label(row, text="MB").grid(row=0, column=1, padx=(6, 0))
+        ctk.CTkEntry(
+            memory_row,
+            textvariable=self.memory_var,
+            width=110,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).grid(row=0, column=0, sticky="w")
+        label(memory_row, "MB", muted=True).grid(row=0, column=1, padx=(8, 0))
 
-        ttk.Label(general, text="Java 路径").grid(row=1, column=0, sticky="w", pady=3)
-        java_row = ttk.Frame(general)
-        java_row.grid(row=1, column=1, sticky="ew", pady=3)
+        label(form, "Java 路径").grid(row=1, column=0, sticky="w", pady=6)
+        java_row = ctk.CTkFrame(form, fg_color="transparent")
+        java_row.grid(row=1, column=1, sticky="ew", pady=6)
         java_row.columnconfigure(0, weight=1)
         self.java_var = tk.StringVar()
-        self.java_combo = ttk.Combobox(
-            java_row, textvariable=self.java_var, values=self.app.java_choices()
+        self.java_combo = Combo(
+            java_row, variable=self.java_var, values=self.app.java_choices(), width=420
         )
         self.java_combo.grid(row=0, column=0, sticky="ew")
-        ttk.Button(java_row, text="…", width=3, command=self.browse_java).grid(
-            row=0, column=1, padx=(4, 0)
+        ctk.CTkButton(java_row, text="…", width=40, command=self.browse_java).grid(
+            row=0, column=1, padx=(6, 0)
         )
-        ttk.Button(java_row, text="检测", width=6, command=self.detect_java).grid(
-            row=0, column=2, padx=(4, 0)
+        ctk.CTkButton(java_row, text="检测", width=64, command=self.detect_java).grid(
+            row=0, column=2, padx=(6, 0)
         )
 
         self.log_window_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            general, text="默认在启动时打开独立日志窗口", variable=self.log_window_var
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ctk.CTkCheckBox(
+            form,
+            text="默认在启动时打开独立日志窗口",
+            variable=self.log_window_var,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
-        ttk.Label(general, text="下载源").grid(row=5, column=0, sticky="w", pady=3)
+        label(form, "下载源").grid(row=3, column=0, sticky="w", pady=6)
         from gelauncher.core.net import SOURCE_MODE_LABELS, SOURCE_MODES
 
         self.source_labels = {SOURCE_MODE_LABELS[mode]: mode for mode in SOURCE_MODES}
         self.source_var = tk.StringVar()
-        ttk.Combobox(
-            general,
-            textvariable=self.source_var,
-            state="readonly",
+        self.source_combo = Combo(
+            form,
+            variable=self.source_var,
             values=list(self.source_labels),
-        ).grid(row=5, column=1, sticky="ew", pady=3)
+            width=240,
+        )
+        self.source_combo.grid(row=3, column=1, sticky="w", pady=6)
 
-        env = ttk.LabelFrame(body, text="环境", padding=10)
+        env = Card(body, "环境")
         env.grid(row=2, column=0, sticky="ew", pady=(10, 0))
-        env.columnconfigure(1, weight=1)
         self.env_var = tk.StringVar(value="")
-        ttk.Label(env, textvariable=self.env_var, wraplength=760).grid(row=0, column=0, sticky="w")
+        label(env.body, muted=True, textvariable=self.env_var, wraplength=820).grid(
+            row=0, column=0, sticky="w"
+        )
         self.java_list_var = tk.StringVar(value="")
-        ttk.Label(env, textvariable=self.java_list_var, foreground="#666", wraplength=760).grid(
+        label(env.body, muted=True, textvariable=self.java_list_var, wraplength=820).grid(
             row=1, column=0, sticky="w", pady=(6, 0)
         )
 
-        ttk.Label(body, text=f"Ge 启动器 {__version__}", foreground="#666").grid(
-            row=3, column=0, sticky="w", pady=(14, 0)
-        )
+        label(
+            body,
+            f"Ge 启动器 {__version__}",
+            muted=True,
+        ).grid(row=3, column=0, sticky="w", pady=(14, 0))
 
         # 即时保存：改任何一项都自动落盘
         self._loading = False
@@ -950,11 +966,11 @@ class SettingsPage(Page):
         self.memory_var.set(str(config.max_memory_mb))
         self.java_var.set(config.java_path)
         self.log_window_var.set(bool(config.show_log_window))
-        label = next(
+        source = next(
             (text for text, mode in self.source_labels.items() if mode == config.download_source),
             next(iter(self.source_labels)),
         )
-        self.source_var.set(label)
+        self.source_var.set(source)
         self._loading = False
         self.refresh_java_choices()
         env = current_env()

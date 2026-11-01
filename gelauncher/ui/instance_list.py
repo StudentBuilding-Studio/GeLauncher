@@ -38,6 +38,7 @@ class InstanceList(tk.Frame):
         columns: tuple[str, ...] = (),
         headers: tuple[str, ...] = (),
         on_row=None,
+        on_double=None,
         column_widths: tuple[int, ...] | None = None,
         row_height: int = 40,
         **kwargs,
@@ -48,6 +49,7 @@ class InstanceList(tk.Frame):
         self.columns = tuple(columns)
         self.headers = tuple(headers) or ("",)
         self.on_row = on_row
+        self.on_double = on_double
         self.column_widths = column_widths or (260, 110, 100, 80)
         self.scale = theme.scale_factor()
         self.row_height = max(int(row_height * self.scale), 28)
@@ -93,6 +95,7 @@ class InstanceList(tk.Frame):
         self._body.bind("<Motion>", self._on_motion)
         self._body.bind("<Leave>", lambda _e: self._set_hover(None))
         self._body.bind("<Button-1>", self._on_click)
+        self._body.bind("<Double-1>", self._on_double)
         self._header.bind("<Configure>", lambda _e: self.after(30, self._draw_header))
 
     # ------------------------------------------------------------------ Treeview 兼容 API
@@ -292,6 +295,11 @@ class InstanceList(tk.Frame):
         self.selection_set(iid)
         if self.on_row is not None:
             self.on_row(iid)
+
+    def _on_double(self, event) -> None:
+        iid = self._row_at(event.y)
+        if iid is not None and self.on_double is not None:
+            self.on_double(iid)
 
     def _on_motion(self, event) -> None:
         self._set_hover(self._row_at(event.y))
