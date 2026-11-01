@@ -1006,13 +1006,23 @@ class SettingsPage(Page):
         env = Card(body, "环境")
         env.grid(row=2, column=0, sticky="ew", pady=(10, 0))
         self.env_var = tk.StringVar(value="")
-        label(env.body, muted=True, textvariable=self.env_var, wraplength=820).grid(
-            row=0, column=0, sticky="w"
-        )
+        self.env_label = label(env.body, muted=True, textvariable=self.env_var, wraplength=820)
+        self.env_label.grid(row=0, column=0, sticky="w")
         self.java_list_var = tk.StringVar(value="")
-        label(env.body, muted=True, textvariable=self.java_list_var, wraplength=820).grid(
-            row=1, column=0, sticky="w", pady=(6, 0)
+        self.java_list_label = label(
+            env.body, muted=True, textvariable=self.java_list_var, wraplength=820
         )
+        self.java_list_label.grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        def _refit_env(event) -> None:
+            from gelauncher.ui import theme
+
+            # CTk 的 wraplength 会再乘一次 DPI 缩放，这里先换算回逻辑像素
+            wrap = max(int(event.width / theme.scale_factor()) - 12, 260)
+            self.env_label.configure(wraplength=wrap)
+            self.java_list_label.configure(wraplength=wrap)
+
+        env.body.bind("<Configure>", _refit_env, add="+")
 
         label(
             body,
@@ -1062,7 +1072,7 @@ class SettingsPage(Page):
         runtimes = getattr(self.app, "detected_javas", [])
         if runtimes:
             self.java_list_var.set(
-                "；".join(f"Java {major}（{path}）" for major, path in runtimes)
+                "\n".join(f"Java {major}（{path}）" for major, path in runtimes)
             )
 
     def _schedule_save(self) -> None:
