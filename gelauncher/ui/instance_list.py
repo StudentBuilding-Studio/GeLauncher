@@ -67,6 +67,7 @@ class InstanceList(tk.Frame):
 
         self._header = tk.Canvas(
             self,
+            width=10,
             height=int(34 * self.scale),
             bg=HEADER_BG,
             highlightthickness=0,
@@ -76,6 +77,7 @@ class InstanceList(tk.Frame):
 
         self._body = tk.Canvas(
             self,
+            width=10,
             bg=CANVAS_BG,
             highlightthickness=0,
             bd=0,

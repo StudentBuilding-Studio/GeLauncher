@@ -85,13 +85,18 @@ class VersionsPage(Page):
         body = ttk.Panedwindow(self.list_frame, orient="horizontal")
         body.grid(row=1, column=0, sticky="nsew")
         self.list_frame.rowconfigure(1, weight=1)
+        self._paned = body
 
         dir_frame = self._build_dir_list(body)
         versions = ttk.LabelFrame(body, text="已安装的版本", padding=6)
         versions.columnconfigure(0, weight=1)
         versions.rowconfigure(1, weight=1)
-        body.add(dir_frame, weight=1)
-        body.add(versions, weight=4)
+        body.add(dir_frame, weight=0)
+        body.add(versions, weight=1)
+        # weight 只影响"窗口变大时怎么分"，初始位置要显式设，否则是 1:1
+        self._pane_ready = False
+        self._pane_job = None
+        body.bind("<Configure>", self._on_pane_configure)
 
         # 过滤 / 安装原版 / 刷新 都放进"已安装的版本"板块里
         toolbar = ttk.Frame(versions)
@@ -127,6 +132,32 @@ class VersionsPage(Page):
             on_row=self.open,
         )
         self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew")
+
+    def _on_pane_configure(self, _event=None) -> None:
+        """窗口尺寸稳定 250ms 后再定初始分隔位置（启动时宽度会变好几次）。"""
+        if getattr(self, "_pane_ready", False):
+            return
+        if self._pane_job is not None:
+            try:
+                self.after_cancel(self._pane_job)
+            except tk.TclError:
+                pass
+        self._pane_job = self.after(250, self._init_pane)
+
+    def _init_pane(self) -> None:
+        """目录列表默认占约 22%，之后用户可以拖分隔条自己调。"""
+        self._pane_job = None
+        if getattr(self, "_pane_ready", False):
+            return
+        try:
+            width = self._paned.winfo_width()
+            if width <= 100:
+                return
+            target = max(int(width * 0.22), int(180 * getattr(self.app, "scale", 1.0)))
+            self._paned.sashpos(0, min(target, int(width * 0.5)))
+            self._pane_ready = True
+        except tk.TclError:
+            pass
 
     def _build_dir_list(self, parent):
         frame = ttk.LabelFrame(parent, text="目录列表", padding=6)
