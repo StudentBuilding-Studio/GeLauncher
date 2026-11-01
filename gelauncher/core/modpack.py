@@ -32,6 +32,10 @@ class ModpackFile:
     urls: list[str] = field(default_factory=list)
     sha1: str | None = None
     size: int | None = None
+    #: CurseForge 文件靠 projectID/fileID 查 API 才能拿到下载地址
+    project_id: int | None = None
+    file_id: int | None = None
+    required: bool = True
 
 
 @dataclass
@@ -166,7 +170,7 @@ def _hmcl(archive: zipfile.ZipFile) -> ModpackInfo | None:
 
 
 def _mcbbs(archive: zipfile.ZipFile) -> ModpackInfo | None:
-    manifest = _read_json(archive, "mcbbs.packaging")
+    manifest = _read_json(archive, "mcbbs.packmeta") or _read_json(archive, "mcbbs.packaging")
     if manifest is None or manifest.get("manifestType") != "minecraftModpack":
         return None
     game_version = None
@@ -177,7 +181,7 @@ def _mcbbs(archive: zipfile.ZipFile) -> ModpackInfo | None:
             continue
         addon_id = str(addon.get("id") or "").lower()
         version = str(addon.get("version") or "")
-        if addon_id == "minecraft":
+        if addon_id in ("game", "minecraft"):
             game_version = version
             continue
         kind = _LOADER_ALIASES.get(addon_id)
@@ -198,15 +202,114 @@ def _mcbbs(archive: zipfile.ZipFile) -> ModpackInfo | None:
     for entry in manifest.get("files") or []:
         if not isinstance(entry, dict):
             continue
-        if entry.get("type") != "addon":
-            info.notes.append("这个包含 CurseForge 文件，需要 CurseForge API 才能下载")
-            continue
         path = entry.get("path")
         if not isinstance(path, str):
             continue
+        # MCBBS 的 files 记录的是实例内相对路径，内容通常就在 overrides/ 里；
+        # 配了 fileApi 的服务器化整合包才需要另外下载。
         urls = [f"{file_api}/{path.lstrip('/')}"] if file_api else []
         info.files.append(
-            ModpackFile(path=path.lstrip("/"), urls=urls, sha1=entry.get("hash"))
+            ModpackFile(
+                path=path.lstrip("/"),
+                urls=urls,
+                sha1=entry.get("hash"),
+                project_id=entry.get("projectID") if entry.get("type") == "curse" else None,
+                file_id=entry.get("fileID") if entry.get("type") == "curse" else None,
+            )
+        )
+    return info
+
+
+def _multimc(archive: zipfile.ZipFile) -> ModpackInfo | None:
+    pack = _read_json(archive, "mmc-pack.json")
+    if pack is None or "instance.cfg" not in archive.namelist():
+        return None
+    game_version = None
+    loader = None
+    loader_version = None
+    for component in pack.get("components") or []:
+        if not isinstance(component, dict):
+            continue
+        uid = str(component.get("uid") or "")
+        version = str(component.get("version") or "")
+        if uid == "net.minecraft":
+            game_version = version
+        elif uid == "net.minecraftforge":
+            loader, loader_version = "forge", version
+        elif uid == "net.fabricmc.fabric-loader":
+            loader, loader_version = "fabric", version
+        elif uid in ("net.neoforged", "net.neoforged.neoforge"):
+            loader, loader_version = "neoforge", version
+    names = archive.namelist()
+    prefix = ""
+    if any(name.startswith(".minecraft/") for name in names):
+        prefix = ".minecraft/"
+    elif any(name.startswith("minecraft/") for name in names):
+        prefix = "minecraft/"
+    pack_name = "MultiMC 整合包"
+    try:
+        config_text = archive.read("instance.cfg").decode("utf-8", "replace")
+    except KeyError:
+        config_text = ""
+    for line in config_text.splitlines():
+        if line.startswith("name="):
+            pack_name = line.split("=", 1)[1].strip() or pack_name
+            break
+    return ModpackInfo(
+        provider="MultiMC",
+        name=pack_name,
+        version=str(pack.get("formatVersion") or ""),
+        game_version=game_version,
+        loader=loader,
+        loader_version=loader_version,
+        overrides=[prefix] if prefix else [],
+        manifest=pack,
+    )
+
+
+def _curse(archive: zipfile.ZipFile) -> ModpackInfo | None:
+    manifest = _read_json(archive, "manifest.json")
+    if manifest is None or manifest.get("manifestType") != "minecraftModpack":
+        return None
+    if "mcbbs.packmeta" in archive.namelist() or "mcbbs.packaging" in archive.namelist():
+        return None  # 这是 MCBBS 包，交给 _mcbbs
+    minecraft = manifest.get("minecraft") or {}
+    game_version = str(minecraft.get("version") or "") or None
+    loader = None
+    loader_version = None
+    for entry in minecraft.get("modLoaders") or []:
+        if not isinstance(entry, dict):
+            continue
+        loader_id = str(entry.get("id") or "")
+        if "-" not in loader_id:
+            continue
+        kind, version = loader_id.split("-", 1)
+        kind = _LOADER_ALIASES.get(kind.lower())
+        if kind:
+            loader, loader_version = kind, version
+            break
+    overrides = str(manifest.get("overrides") or "overrides").strip("/")
+    info = ModpackInfo(
+        provider="CurseForge",
+        name=str(manifest.get("name") or "").strip() or "未命名整合包",
+        version=str(manifest.get("version") or ""),
+        game_version=game_version,
+        loader=loader,
+        loader_version=loader_version,
+        overrides=[f"{overrides}/"] if overrides else [],
+        manifest=manifest,
+    )
+    for entry in manifest.get("files") or []:
+        if not isinstance(entry, dict):
+            continue
+        info.files.append(
+            ModpackFile(
+                path="",
+                urls=[],
+                project_id=entry.get("projectID"),
+                file_id=entry.get("fileID"),
+                required=bool(entry.get("required", True)),
+            )
         )
     return info
 
@@ -283,7 +386,7 @@ def _manual(archive: zipfile.ZipFile) -> ModpackInfo | None:
     return info
 
 
-_PROVIDERS = (_mcbbs, _modrinth, _hmcl, _manual)
+_PROVIDERS = (_mcbbs, _multimc, _curse, _modrinth, _hmcl, _manual)
 
 
 def detect(archive_path: Path) -> ModpackInfo:
@@ -363,6 +466,29 @@ def _install_loader(
     return True
 
 
+def _curse_file(project_id: int, file_id: int, api_key: str) -> tuple[str | None, str | None]:
+    """查 CurseForge 文件信息；拿不到下载地址时退回 forgecdn 直链。"""
+    import urllib.request
+
+    url = f"https://api.curseforge.com/v1/mods/{project_id}/files/{file_id}"
+    request = urllib.request.Request(
+        url,
+        headers={
+            "X-API-KEY": api_key,
+            "Accept": "application/json",
+            "User-Agent": "gelauncher/0.1",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    data = payload.get("data") or {}
+    name = data.get("fileName")
+    download = data.get("downloadUrl")
+    if not download and name:
+        download = f"https://edge.forgecdn.net/files/{file_id // 1000}/{file_id % 1000}/{name}"
+    return name, download
+
+
 def install_modpack(
     layout: GameLayout,
     archive_path: Path,
@@ -370,6 +496,7 @@ def install_modpack(
     instance_name: str | None = None,
     info: ModpackInfo | None = None,
     game_version: str | None = None,
+    curse_api_key: str | None = None,
     fetcher: Fetcher,
     progress=None,
 ) -> ModpackReport:
@@ -397,19 +524,43 @@ def install_modpack(
 
     root = layout.version_dir(instance)
     jobs: list[DownloadJob] = []
+    unresolved = 0
     for entry in info.files:
-        target = _safe_target(root, entry.path)
-        if target is None or not entry.urls:
+        urls = list(entry.urls)
+        path = entry.path
+        if not urls and entry.project_id and entry.file_id and curse_api_key:
+            try:
+                name, url = _curse_file(entry.project_id, entry.file_id, curse_api_key)
+            except Exception as exc:  # noqa: BLE001 - API 查询失败就记账，不中断
+                notify("curse", f"查 CurseForge 文件失败：{exc}")
+                name, url = None, None
+            if name:
+                path = f"mods/{name}"
+            if url:
+                urls = [url]
+        target = _safe_target(root, path)
+        if not urls:
+            # MCBBS 的 addon 文件本来就在 overrides 里，没有 URL 很正常
+            if entry.project_id:
+                unresolved += 1
+            continue
+        if target is None:
             continue
         jobs.append(
             DownloadJob(
-                urls=entry.urls,
+                urls=urls,
                 destination=target,
                 sha1=entry.sha1,
                 size=entry.size,
-                label=entry.path,
+                label=path,
             )
         )
+    if unresolved:
+        note = f"{unresolved} 个文件需要 CurseForge 下载地址"
+        if not curse_api_key:
+            note += "（在设置里填 CurseForge API key 后重新导入）"
+        info.notes.append(note)
+        notify("curse", note)
     downloads = DownloadReport()
     if jobs:
         notify("files", f"下载 {len(jobs)} 个整合包文件…")

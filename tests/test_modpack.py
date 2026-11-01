@@ -183,3 +183,116 @@ def test_install_modpack_rejects_existing_instance(tmp_path, monkeypatch):
             info=info,
             fetcher=object(),
         )
+
+def test_detect_mcbbs_packmeta_uses_game_addon(tmp_path):
+    manifest = {
+        "manifestType": "minecraftModpack",
+        "name": "HMCL 导出的 MCBBS",
+        "version": "1",
+        "addons": [{"id": "game", "version": "1.16.5"}, {"id": "forge", "version": "36.2.42"}],
+        "files": [{"type": "addon", "path": "config/a.toml", "hash": "x", "force": True}],
+    }
+    info = modpack.detect(_zip(tmp_path / "p.zip", {"mcbbs.packmeta": json.dumps(manifest).encode()}))
+    assert info.provider == "MCBBS"
+    assert info.game_version == "1.16.5"
+    assert (info.loader, info.loader_version) == ("forge", "36.2.42")
+
+
+def test_detect_multimc(tmp_path):
+    entries = {
+        "mmc-pack.json": json.dumps(
+            {
+                "formatVersion": 1,
+                "components": [
+                    {"uid": "net.minecraft", "version": "1.21.1"},
+                    {"uid": "net.neoforged", "version": "21.1.233"},
+                ],
+            }
+        ).encode(),
+        "instance.cfg": b"name=\xe6\x88\x91\xe7\x9a\x84MultiMC\nInstanceType=OneSix\n",
+        ".minecraft/mods/a.jar": b"mod",
+    }
+    info = modpack.detect(_zip(tmp_path / "mmc.zip", entries))
+    assert info.provider == "MultiMC"
+    assert info.game_version == "1.21.1"
+    assert (info.loader, info.loader_version) == ("neoforge", "21.1.233")
+    assert info.overrides == [".minecraft/"]
+    assert info.name == "我的MultiMC"
+
+
+def test_detect_curse_manifest(tmp_path):
+    manifest = {
+        "manifestType": "minecraftModpack",
+        "name": "Curse 包",
+        "version": "1",
+        "overrides": ".minecraft",
+        "minecraft": {
+            "version": "1.20.1",
+            "modLoaders": [{"id": "forge-47.4.16", "primary": True}],
+        },
+        "files": [{"projectID": 1, "fileID": 2, "required": True}],
+    }
+    info = modpack.detect(_zip(tmp_path / "c.zip", {"manifest.json": json.dumps(manifest).encode()}))
+    assert info.provider == "CurseForge"
+    assert info.game_version == "1.20.1"
+    assert (info.loader, info.loader_version) == ("forge", "47.4.16")
+    assert info.overrides == [".minecraft/"]
+    assert info.files and info.files[0].project_id == 1
+
+
+def test_install_curse_uses_api(tmp_path, monkeypatch):
+    archive = _zip(
+        tmp_path / "c.zip",
+        {
+            "manifest.json": json.dumps(
+                {
+                    "manifestType": "minecraftModpack",
+                    "name": "c",
+                    "minecraft": {"version": "1.20.1", "modLoaders": [{"id": "forge-47.4.16"}]},
+                    "overrides": ".minecraft",
+                    "files": [{"projectID": 11, "fileID": 22}],
+                }
+            ).encode(),
+            ".minecraft/config/x.cfg": b"cfg",
+        },
+    )
+    layout = GameLayout(tmp_path / ".minecraft")
+    monkeypatch.setattr(modpack, "_install_loader", lambda *a, **k: False)
+
+    def fake_install(layout, version_id, *, instance_name=None, fetcher=None):
+        report = type("R", (), {})()
+        report.ok = True
+        report.downloads = DownloadReport()
+        path = layout.version_json_path(instance_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"id": instance_name, "clientVersion": version_id}), encoding="utf-8")
+        layout.version_jar_path(instance_name).write_bytes(b"jar")
+        return report
+
+    monkeypatch.setattr(modpack.install_vanilla, "install_version", fake_install)
+    monkeypatch.setattr(
+        modpack, "_curse_file", lambda project, file, key: ("example.jar", "https://cdn/example.jar")
+    )
+
+    class FakeFetcher:
+        def download_all(self, jobs, on_done=None):
+            report = DownloadReport()
+            for job in jobs:
+                job.destination.parent.mkdir(parents=True, exist_ok=True)
+                job.destination.write_bytes(b"mod")
+                report.downloaded += 1
+            return report
+
+    info = modpack.detect(archive)
+    report = modpack.install_modpack(
+        layout,
+        archive,
+        instance_name="c",
+        info=info,
+        curse_api_key="KEY",
+        fetcher=FakeFetcher(),
+    )
+    assert report.ok
+    root = layout.version_dir("c")
+    assert (root / "mods/example.jar").read_bytes() == b"mod"
+    assert (root / "config/x.cfg").read_bytes() == b"cfg"

@@ -346,6 +346,7 @@ def cmd_import_modpack(args: argparse.Namespace, config: Config) -> int:
             instance_name=args.instance_name,
             info=info,
             game_version=args.version,
+            curse_api_key=config.curse_api_key or None,
             fetcher=fetcher,
             progress=lambda stage, message: print(f"  [{stage}] {message}", flush=True),
         )

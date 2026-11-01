@@ -20,8 +20,9 @@
   - 一个版本同时只能装一个加载器；装第二个会提示先卸载
   - NeoForge 的版本列表走 BMCLAPI 专用接口，installer 需要的库会先用镜像预下载
     （NeoForge installer 不认 `--mirror`，不预下载会卡在 maven.neoforged.net 超时）
-- **导入整合包**：`.mrpack`（Modrinth）、MCBBS、HMCL 导出包、带 `.minecraft` 结构的 zip；
-  自动装原版 + 加载器，下载清单里的文件并解压 overrides
+- **导入整合包**：Modrinth `.mrpack`、MCBBS（`mcbbs.packmeta`）、CurseForge（`manifest.json`，
+  需要 CurseForge API key 才能下载 mod）、MultiMC/Prism（`mmc-pack.json`）、HMCL 导出包、
+  带 `.minecraft` 结构的 zip；自动装原版 + 加载器，下载清单文件并解压 overrides
 - **账号**：离线账号 + 微软账号（设备代码流登录，token 过期自动刷新）
 - **界面**：版本 / 账号 / 设置三个一级页面，每个版本有独立设置（内存、Java、分辨率、日志窗口）
 - **日志**：每个游戏进程一个独立日志窗口，可自动滚动 / 清空 / 保存

@@ -72,6 +72,8 @@ class Config:
     show_log_window: bool = True
     #: 下载源："auto" / "official" / "mirror"
     download_source: str = "auto"
+    #: CurseForge API key（导入 CurseForge 整合包时用来查文件名和下载地址）
+    curse_api_key: str = ""
     #: 主窗口最后的位置/尺寸（"1040x680+100+50"）
     window_geometry: str = ""
 
