@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
+import customtkinter as ctk
 from tkinter import filedialog, messagebox, ttk
+
+from gelauncher.ui import theme
 
 from gelauncher import __version__
 from gelauncher.cli import detect_loader
@@ -26,22 +29,17 @@ def _same_path(left, right) -> bool:
     )
 
 
-class Page(ttk.Frame):
-    """页面基类：统一 padding 和"切到本页时刷新"的入口。"""
+class Page(ctk.CTkFrame):
+    """页面基类：统一背景和"切到本页时刷新"的入口。"""
 
     title = "页面"
 
     def __init__(self, parent: tk.Misc, app) -> None:
-        super().__init__(parent, padding=10)
+        super().__init__(parent, fg_color=theme.BG, corner_radius=0)
         self.app = app
 
     def on_show(self) -> None:  # pragma: no cover - 子类按需覆盖
         pass
-
-
-# --------------------------------------------------------------------------- #
-# 版本
-# --------------------------------------------------------------------------- #
 
 
 class VersionsPage(Page):
@@ -57,8 +55,8 @@ class VersionsPage(Page):
         self.current: str | None = None
         self.filter_var = tk.StringVar()
 
-        self.list_frame = ttk.Frame(self)
-        self.detail_frame = ttk.Frame(self)
+        self.list_frame = ctk.CTkFrame(self, fg_color="transparent")
+        self.detail_frame = ctk.CTkFrame(self, fg_color="transparent")
         for frame in (self.list_frame, self.detail_frame):
             frame.grid(row=0, column=0, sticky="nsew")
             frame.columnconfigure(0, weight=1)
@@ -71,56 +69,65 @@ class VersionsPage(Page):
     # ---------------------------------------------------------------- 列表
 
     def _build_list(self) -> None:
-        header = ttk.Frame(self.list_frame)
+        from gelauncher.ui.instance_list import InstanceList
+        from gelauncher.ui.widgets import Card, button, label
+
+        header = ctk.CTkFrame(self.list_frame, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
-        ttk.Label(header, text="版本", font=("Microsoft YaHei UI", 11, "bold")).grid(
-            row=0, column=0, sticky="w"
-        )
+        ctk.CTkLabel(
+            header,
+            text="版本",
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=16, weight="bold"),
+        ).grid(row=0, column=0, sticky="w")
         self.dir_hint_var = tk.StringVar(value="")
-        ttk.Label(header, textvariable=self.dir_hint_var, foreground="#666").grid(
-            row=0, column=1, sticky="w", padx=10
+        label(header, muted=True, textvariable=self.dir_hint_var).grid(
+            row=0, column=1, sticky="w", padx=12
         )
 
-        body = ttk.Panedwindow(self.list_frame, orient="horizontal")
+        body = tk.PanedWindow(
+            self.list_frame,
+            orient="horizontal",
+            sashwidth=6,
+            sashrelief="flat",
+            bd=0,
+            bg=theme.bg(),
+            opaqueresize=True,
+        )
         body.grid(row=1, column=0, sticky="nsew")
         self.list_frame.rowconfigure(1, weight=1)
         self._paned = body
 
-        dir_frame = self._build_dir_list(body)
-        versions = ttk.LabelFrame(body, text="已安装的版本", padding=6)
-        versions.columnconfigure(0, weight=1)
-        versions.rowconfigure(1, weight=1)
-        body.add(dir_frame, weight=0)
-        body.add(versions, weight=1)
-        # weight 只影响"窗口变大时怎么分"，初始位置要显式设，否则是 1:1
+        scale = getattr(self.app, "scale", 1.0)
+        dir_card = self._build_dir_list(body)
+        versions = Card(body, "已安装的版本")
+        body.add(dir_card, minsize=int(190 * scale))
+        body.add(versions, minsize=int(340 * scale))
         self._pane_ready = False
         self._pane_job = None
         body.bind("<Configure>", self._on_pane_configure)
 
-        # 过滤 / 安装原版 / 刷新 都放进"已安装的版本"板块里
-        toolbar = ttk.Frame(versions)
-        toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        # 过滤 / 安装原版 / 导入整合包 / 刷新
+        toolbar = ctk.CTkFrame(versions.body, fg_color="transparent")
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         toolbar.columnconfigure(1, weight=1)
-        ttk.Label(toolbar, text="过滤").grid(row=0, column=0, padx=(0, 4))
-        entry = ttk.Entry(toolbar, textvariable=self.filter_var, width=18)
-        entry.grid(row=0, column=1, sticky="w")
-        entry.bind("<KeyRelease>", lambda _e: self.refresh())
-        ttk.Button(toolbar, text="安装原版…", width=11, command=self._install_vanilla).grid(
-            row=0, column=2, padx=(8, 0)
+        label(toolbar, "过滤").grid(row=0, column=0, padx=(0, 6))
+        filter_entry = ctk.CTkEntry(toolbar, textvariable=self.filter_var, width=180)
+        filter_entry.grid(row=0, column=1, sticky="w")
+        filter_entry.bind("<KeyRelease>", lambda _e: self.refresh())
+        button(toolbar, "安装原版…", self._install_vanilla).grid(
+            row=0, column=2, padx=(10, 0)
         )
-        ttk.Button(toolbar, text="导入整合包…", width=12, command=self._import_modpack).grid(
+        button(toolbar, "导入整合包…", self._import_modpack).grid(
             row=0, column=3, padx=(6, 0)
         )
-        ttk.Button(toolbar, text="刷新", width=8, command=self.refresh).grid(
-            row=0, column=4, padx=(6, 0)
-        )
+        button(toolbar, "刷新", self.refresh).grid(row=0, column=4, padx=(6, 0))
 
-        from gelauncher.ui.instance_list import InstanceList
-
-        scale = getattr(self.app, "scale", 1.0)
+        versions.body.columnconfigure(0, weight=1)
+        versions.body.rowconfigure(1, weight=1)
         self.tree = InstanceList(
-            versions,
+            versions.body,
             columns=("version", "loader", "java"),
             headers=("实例", "版本", "加载器", "Java"),
             column_widths=(
@@ -131,10 +138,10 @@ class VersionsPage(Page):
             ),
             on_row=self.open,
         )
-        self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        self.tree.grid(row=1, column=0, sticky="nsew")
 
     def _on_pane_configure(self, _event=None) -> None:
-        """窗口尺寸稳定 250ms 后再定初始分隔位置（启动时宽度会变好几次）。"""
+        """窗口尺寸稳定 250ms 后再定初始分隔位置。"""
         if getattr(self, "_pane_ready", False):
             return
         if self._pane_job is not None:
@@ -145,7 +152,7 @@ class VersionsPage(Page):
         self._pane_job = self.after(250, self._init_pane)
 
     def _init_pane(self) -> None:
-        """目录列表默认占约 22%，之后用户可以拖分隔条自己调。"""
+        """目录列表默认占约 22%，之后用户可以拖动分隔条自己调。"""
         self._pane_job = None
         if getattr(self, "_pane_ready", False):
             return
@@ -154,40 +161,41 @@ class VersionsPage(Page):
             if width <= 100:
                 return
             target = max(int(width * 0.22), int(180 * getattr(self.app, "scale", 1.0)))
-            self._paned.sashpos(0, min(target, int(width * 0.5)))
+            self._paned.sash_place(0, min(target, int(width * 0.5)), 0)
             self._pane_ready = True
         except tk.TclError:
             pass
 
     def _build_dir_list(self, parent):
-        frame = ttk.LabelFrame(parent, text="目录列表", padding=6)
-        frame.columnconfigure(0, weight=1)
-        frame.rowconfigure(0, weight=1)
-
         from gelauncher.ui.instance_list import InstanceList
+        from gelauncher.ui.widgets import Card, button
+
+        card = Card(parent, "目录列表")
+        card.body.columnconfigure(0, weight=1)
+        card.body.rowconfigure(0, weight=1)
 
         self.dir_tree = InstanceList(
-            frame,
+            card.body,
             headers=("游戏目录",),
             column_widths=(int(230 * getattr(self.app, "scale", 1.0)),),
             on_row=self._on_dir_row,
         )
-        self.dir_tree.grid(row=0, column=0, columnspan=2, sticky="nsew")
+        self.dir_tree.grid(row=0, column=0, sticky="nsew")
 
-        buttons = ttk.Frame(frame)
-        buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        buttons = ctk.CTkFrame(card.body, fg_color="transparent")
+        buttons.grid(row=1, column=0, sticky="ew", pady=(8, 0))
         buttons.columnconfigure(0, weight=1)
         buttons.columnconfigure(1, weight=1)
-        ttk.Button(buttons, text="添加目录…", command=self._add_dir).grid(
+        button(buttons, "添加目录…", self._add_dir).grid(
             row=0, column=0, sticky="ew", padx=(0, 3)
         )
-        ttk.Button(buttons, text="打开游戏目录", command=self._open_selected_dir).grid(
+        button(buttons, "打开游戏目录", self._open_selected_dir).grid(
             row=0, column=1, sticky="ew", padx=(3, 0)
         )
-        ttk.Button(frame, text="从列表移除", command=self._remove_dir).grid(
-            row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0)
+        button(card.body, "从列表移除", self._remove_dir).grid(
+            row=2, column=0, sticky="ew", pady=(6, 0)
         )
-        return frame
+        return card
 
     def refresh_dirs(self) -> None:
         self.dir_tree.delete(*self.dir_tree.get_children())
@@ -335,33 +343,40 @@ class VersionsPage(Page):
     # ---------------------------------------------------------------- 二级页
 
     def _build_detail(self) -> None:
-        header = ttk.Frame(self.detail_frame)
+        from gelauncher.ui.widgets import Card, Combo, button, label
+
+        header = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
         header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         header.columnconfigure(1, weight=1)
-        ttk.Button(header, text="← 返回", width=9, command=self.show_list).grid(row=0, column=0)
+        button(header, "← 返回", self.show_list, width=90).grid(row=0, column=0, sticky="w")
         self.title_var = tk.StringVar(value="")
-        ttk.Label(header, textvariable=self.title_var, font=("Microsoft YaHei UI", 12, "bold")).grid(
-            row=0, column=1, sticky="w", padx=10
-        )
+        ctk.CTkLabel(
+            header,
+            textvariable=self.title_var,
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=16, weight="bold"),
+        ).grid(row=0, column=1, sticky="w", padx=12)
         self.detail_status = tk.StringVar(value="")
-        ttk.Label(header, textvariable=self.detail_status, foreground="#666").grid(
+        label(header, muted=True, textvariable=self.detail_status).grid(
             row=0, column=2, sticky="e"
         )
 
-        body = ttk.Frame(self.detail_frame)
+        body = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
         body.columnconfigure(0, weight=1)
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
+        self.detail_frame.rowconfigure(1, weight=1)
 
-        info = ttk.LabelFrame(body, text="这个版本", padding=10)
+        info = Card(body, "这个版本")
         info.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
-        info.columnconfigure(1, weight=1)
+        info_form = info.body
+        info_form.columnconfigure(1, weight=1)
         self.info_vars = {
             key: tk.StringVar(value="-")
             for key in ("mainClass", "实例", "版本", "assets", "库", "隔离目录")
         }
-        for index, (label, key) in enumerate(
+        for index, (text, key) in enumerate(
             (
                 ("主类", "mainClass"),
                 ("实例", "实例"),
@@ -371,43 +386,46 @@ class VersionsPage(Page):
                 ("游戏目录", "隔离目录"),
             )
         ):
-            ttk.Label(info, text=label, width=9).grid(row=index, column=0, sticky="nw", pady=2)
-            ttk.Label(info, textvariable=self.info_vars[key], wraplength=360).grid(
-                row=index, column=1, sticky="w", pady=2
-            )
+            label(info_form, text).grid(row=index, column=0, sticky="nw", pady=3)
+            ctk.CTkLabel(
+                info_form,
+                textvariable=self.info_vars[key],
+                anchor="w",
+                justify="left",
+                wraplength=360,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ).grid(row=index, column=1, sticky="w", pady=3)
+        button(
+            info_form, "删除这个实例…", self._delete_version, danger=True
+        ).grid(row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(14, 0))
 
-        ttk.Button(
-            info,
-            text="删除这个实例…",
-            style="Danger.TButton",
-            command=self._delete_version,
-        ).grid(row=len(self.info_vars), column=0, columnspan=2, sticky="ew", pady=(12, 0))
-
-        settings = ttk.LabelFrame(body, text="实例设置", padding=10)
-        settings.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        settings_card = Card(body, "实例设置")
+        settings_card.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        settings = settings_card.body
         settings.columnconfigure(1, weight=1)
 
-        ttk.Label(settings, text="最大内存").grid(row=0, column=0, sticky="w", pady=3)
-        memory_row = ttk.Frame(settings)
-        memory_row.grid(row=0, column=1, sticky="ew", pady=3)
-        memory_row.columnconfigure(0, weight=1)
-        import customtkinter as ctk
-
+        label(settings, "最大内存").grid(row=0, column=0, sticky="w", pady=4)
+        memory_row = ctk.CTkFrame(settings, fg_color="transparent")
+        memory_row.grid(row=0, column=1, sticky="w", pady=4)
         self.memory_var = tk.StringVar()
         ctk.CTkEntry(
             memory_row,
             textvariable=self.memory_var,
             width=110,
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).grid(row=0, column=0, sticky="ew")
-        ttk.Label(memory_row, text="MB").grid(row=0, column=1, padx=(6, 0))
+        ).grid(row=0, column=0)
+        button(memory_row, "−", lambda: self._step_memory(-512), width=34, height=30).grid(
+            row=0, column=1, padx=(8, 0)
+        )
+        button(memory_row, "+", lambda: self._step_memory(512), width=34, height=30).grid(
+            row=0, column=2, padx=(4, 0)
+        )
+        label(memory_row, "MB", muted=True).grid(row=0, column=3, padx=(8, 0))
 
-        ttk.Label(settings, text="Java 路径").grid(row=1, column=0, sticky="w", pady=3)
-        java_row = ttk.Frame(settings)
-        java_row.grid(row=1, column=1, sticky="ew", pady=3)
+        label(settings, "Java 路径").grid(row=1, column=0, sticky="w", pady=4)
+        java_row = ctk.CTkFrame(settings, fg_color="transparent")
+        java_row.grid(row=1, column=1, sticky="ew", pady=4)
         java_row.columnconfigure(0, weight=1)
-        from gelauncher.ui.widgets import Combo, button
-
         self.java_var = tk.StringVar()
         self.java_combo = Combo(
             java_row,
@@ -424,8 +442,6 @@ class VersionsPage(Page):
             row=0, column=2, padx=(6, 0)
         )
 
-        from gelauncher.ui import theme
-
         self.java_hint_var = tk.StringVar(value="")
         self.java_hint_label = ctk.CTkLabel(
             settings,
@@ -438,13 +454,13 @@ class VersionsPage(Page):
         )
         self.java_hint_label.grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 4))
 
-        ttk.Label(settings, text="窗口尺寸").grid(row=2, column=0, sticky="w", pady=3)
-        size_row = ttk.Frame(settings)
-        size_row.grid(row=2, column=1, sticky="ew", pady=3)
+        label(settings, "窗口尺寸").grid(row=2, column=0, sticky="w", pady=4)
+        size_row = ctk.CTkFrame(settings, fg_color="transparent")
+        size_row.grid(row=2, column=1, sticky="w", pady=4)
         self.width_var = tk.StringVar()
         self.height_var = tk.StringVar()
         ctk.CTkEntry(size_row, textvariable=self.width_var, width=80).grid(row=0, column=0)
-        ttk.Label(size_row, text="×").grid(row=0, column=1, padx=6)
+        label(size_row, "×", muted=True).grid(row=0, column=1, padx=6)
         ctk.CTkEntry(size_row, textvariable=self.height_var, width=80).grid(row=0, column=2)
 
         self.log_window_var = tk.BooleanVar(value=True)
@@ -453,24 +469,24 @@ class VersionsPage(Page):
             text="启动时打开独立日志窗口",
             variable=self.log_window_var,
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(10, 2))
 
-        launch_panel = ttk.LabelFrame(body, text="启动", padding=10)
+        launch_panel = Card(body, "启动")
         launch_panel.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=(8, 0))
-        launch_panel.columnconfigure(0, weight=1)
-        self.start_button = ttk.Button(
-            launch_panel, text="▶ 启动游戏", style="Accent.TButton", command=self._start
+        launch_panel.body.columnconfigure(0, weight=1)
+        self.start_button = button(
+            launch_panel.body, "▶ 启动游戏", self._start, accent=True, height=42
         )
-        self.start_button.grid(row=0, column=0, sticky="ew", ipady=6)
+        self.start_button.grid(row=0, column=0, sticky="ew")
 
-        open_panel = ttk.LabelFrame(body, text="浏览", padding=10)
+        open_panel = Card(body, "浏览")
         open_panel.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=(8, 0))
-        open_panel.columnconfigure(0, weight=1)
-        open_panel.columnconfigure(1, weight=1)
-        ttk.Button(open_panel, text="日志窗口", command=self._open_log).grid(
+        open_panel.body.columnconfigure(0, weight=1)
+        open_panel.body.columnconfigure(1, weight=1)
+        button(open_panel.body, "日志窗口", self._open_log).grid(
             row=0, column=0, sticky="ew", padx=(0, 3)
         )
-        ttk.Button(open_panel, text="版本目录", command=self._open_version_dir).grid(
+        button(open_panel.body, "版本目录", self._open_version_dir).grid(
             row=0, column=1, sticky="ew", padx=(3, 0)
         )
         browse_items = (
@@ -482,10 +498,10 @@ class VersionsPage(Page):
         )
         for index, (text, folder) in enumerate(browse_items, start=1):
             row, column = divmod(index, 2)
-            ttk.Button(
-                open_panel,
-                text=text,
-                command=lambda name=folder: self._browse(name),
+            button(
+                open_panel.body,
+                text,
+                lambda name=folder: self._browse(name),
             ).grid(
                 row=row,
                 column=column,
@@ -494,29 +510,30 @@ class VersionsPage(Page):
                 padx=(0, 3) if column == 0 else (3, 0),
             )
 
-        install_panel = ttk.LabelFrame(body, text="自动安装", padding=10)
+        install_panel = Card(body, "自动安装")
         install_panel.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        install_form = install_panel.body
         for column in range(3):
-            install_panel.columnconfigure(column, weight=1)
-        self.fabric_button = ttk.Button(
-            install_panel, text="装 Fabric", command=lambda: self._install_loader("fabric")
+            install_form.columnconfigure(column, weight=1)
+        self.fabric_button = button(
+            install_form, "装 Fabric", lambda: self._install_loader("fabric")
         )
         self.fabric_button.grid(row=0, column=0, sticky="ew", padx=(0, 4))
-        self.forge_button = ttk.Button(
-            install_panel, text="装 Forge", command=lambda: self._install_loader("forge")
+        self.forge_button = button(
+            install_form, "装 Forge", lambda: self._install_loader("forge")
         )
         self.forge_button.grid(row=0, column=1, sticky="ew", padx=4)
-        self.neoforge_button = ttk.Button(
-            install_panel, text="装 NeoForge", command=lambda: self._install_loader("neoforge")
+        self.neoforge_button = button(
+            install_form, "装 NeoForge", lambda: self._install_loader("neoforge")
         )
         self.neoforge_button.grid(row=0, column=2, sticky="ew", padx=(4, 0))
-        self.uninstall_loader_button = ttk.Button(
-            install_panel, text="卸载加载器", command=self._uninstall_loader
+        self.uninstall_loader_button = button(
+            install_form, "卸载加载器", self._uninstall_loader
         )
-        self.uninstall_loader_button.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0), padx=(0, 4))
-        self.repair_button = ttk.Button(
-            install_panel, text="补全文件", command=self._repair
+        self.uninstall_loader_button.grid(
+            row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0), padx=(0, 4)
         )
+        self.repair_button = button(install_form, "补全文件", self._repair)
         self.repair_button.grid(row=1, column=2, sticky="ew", pady=(6, 0), padx=(4, 0))
 
         # 所有设置项都是"改完立即保存"，不再有保存按钮
@@ -527,7 +544,13 @@ class VersionsPage(Page):
         self.java_var.trace_add("write", lambda *_: self._update_java_hint())
         self.log_window_var.trace_add("write", lambda *_: self._schedule_save())
 
-    # ---------------------------------------------------------------- 二级页动作
+    def _step_memory(self, delta: int) -> None:
+        try:
+            current = int(self.memory_var.get().strip() or self.app.config.max_memory_mb)
+        except ValueError:
+            current = self.app.config.max_memory_mb
+        value = max(512, min(32768, current + delta))
+        self.memory_var.set(str(value))
 
     def show_list(self) -> None:
         self.detail_frame.grid_remove()

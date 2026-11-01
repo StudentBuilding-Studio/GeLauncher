@@ -730,3 +730,22 @@ def test_open_dir_buttons(app, monkeypatch):
     versions.open("1.21.8")
     versions._open_version_dir()
     assert opened[-1] == str(app.layout.version_dir("1.21.8"))
+
+
+def test_memory_step_buttons(app):
+    versions = app.pages["versions"]
+    versions.open("1.21.8")
+
+    versions.memory_var.set("2048")
+    versions._step_memory(512)
+    assert versions.memory_var.get() == "2560"
+    versions._step_memory(-512)
+    assert versions.memory_var.get() == "2048"
+
+    versions.memory_var.set("512")
+    versions._step_memory(-512)
+    assert versions.memory_var.get() == "512"
+
+    versions.memory_var.set("32768")
+    versions._step_memory(512)
+    assert versions.memory_var.get() == "32768"

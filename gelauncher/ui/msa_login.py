@@ -14,12 +14,15 @@ import queue
 import threading
 import tkinter as tk
 import webbrowser
-from tkinter import ttk
+
+import customtkinter as ctk
 
 from gelauncher.core import microsoft
+from gelauncher.ui import theme
+from gelauncher.ui.widgets import button, label
 
 
-class MicrosoftLoginDialog(tk.Toplevel):
+class MicrosoftLoginDialog(ctk.CTkToplevel):
     def __init__(self, master: tk.Misc, client_id: str, authority: str = "consumers") -> None:
         super().__init__(master)
         # 用户没配就用启动器内置的 client id（正常情况下用户完全不需要关心这个）
@@ -28,11 +31,12 @@ class MicrosoftLoginDialog(tk.Toplevel):
         self.result: dict | None = None
         self.messages: queue.Queue[tuple] = queue.Queue()
         self._cancelled = False
+        self._poll_after: str | None = None
 
         self.title("登录微软账号")
         self.resizable(False, False)
         self.transient(master)
-        self.grab_set()
+        self.geometry("460x420")
 
         self.status_var = tk.StringVar(value="正在向微软申请登录代码…")
         self.code_var = tk.StringVar(value="……")
@@ -40,41 +44,67 @@ class MicrosoftLoginDialog(tk.Toplevel):
 
         self._build()
         self.protocol("WM_DELETE_WINDOW", self._on_cancel)
-        self.after(100, self._poll)
+        self.after(120, self._focus)
+        self._poll_after = self.after(100, self._poll)
         self.after(200, self._start)
 
     def _build(self) -> None:
-        frame = ttk.Frame(self, padding=16)
-        frame.grid(row=0, column=0, sticky="nsew")
+        frame = ctk.CTkFrame(self, fg_color="transparent")
+        frame.pack(fill="both", expand=True, padx=20, pady=18)
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=1)
 
-        ttk.Label(frame, text="在浏览器里登录微软账号", font=("Microsoft YaHei UI", 12, "bold")).grid(
-            row=0, column=0, columnspan=2, sticky="w"
-        )
-        ttk.Label(
+        ctk.CTkLabel(
             frame,
-            text="1. 打开下面的网址\n2. 输入代码\n3. 用你的微软账号登录（Xbox 账号就是微软账号）",
+            text="在浏览器里登录微软账号",
+            anchor="w",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=16, weight="bold"),
+        ).grid(row=0, column=0, columnspan=2, sticky="w")
+        label(
+            frame,
+            "1. 打开下面的网址\n2. 输入代码\n3. 用你的微软账号登录（Xbox 账号就是微软账号）",
+            muted=True,
             justify="left",
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 10))
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 12))
 
-        ttk.Label(frame, textvariable=self.uri_var, foreground="#2d6cdf").grid(
-            row=2, column=0, columnspan=2, sticky="w"
-        )
-        ttk.Entry(frame, textvariable=self.code_var, font=("Consolas", 16, "bold"), width=18, justify="center").grid(
-            row=3, column=0, columnspan=2, sticky="ew", pady=(6, 10)
-        )
-        ttk.Button(frame, text="打开登录页", command=self._open_browser).grid(
+        ctk.CTkLabel(
+            frame,
+            textvariable=self.uri_var,
+            anchor="w",
+            text_color=theme.ACCENT,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12, underline=True),
+        ).grid(row=2, column=0, columnspan=2, sticky="w")
+        ctk.CTkEntry(
+            frame,
+            textvariable=self.code_var,
+            font=ctk.CTkFont(family="Consolas", size=20, weight="bold"),
+            height=44,
+            justify="center",
+        ).grid(row=3, column=0, columnspan=2, sticky="ew", pady=(8, 12))
+        button(frame, "打开登录页", self._open_browser).grid(
             row=4, column=0, sticky="ew", padx=(0, 4)
         )
-        ttk.Button(frame, text="复制代码", command=self._copy_code).grid(
+        button(frame, "复制代码", self._copy_code).grid(
             row=4, column=1, sticky="ew", padx=(4, 0)
         )
 
-        ttk.Label(frame, textvariable=self.status_var, foreground="#666", wraplength=360, justify="left").grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(12, 6)
-        )
-        ttk.Button(frame, text="取消", command=self._on_cancel).grid(
+        label(
+            frame,
+            muted=True,
+            textvariable=self.status_var,
+            wraplength=400,
+            justify="left",
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(14, 8))
+        button(frame, "取消", self._on_cancel).grid(
             row=6, column=0, columnspan=2, sticky="ew"
         )
+
+    def _focus(self) -> None:
+        try:
+            self.grab_set()
+            self.focus_set()
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------ 后台
 
@@ -125,6 +155,7 @@ class MicrosoftLoginDialog(tk.Toplevel):
     # ------------------------------------------------------------------ 消息
 
     def _poll(self) -> None:
+        self._poll_after = None
         try:
             while True:
                 kind, payload = self.messages.get_nowait()
@@ -145,14 +176,25 @@ class MicrosoftLoginDialog(tk.Toplevel):
                         authority=authority,
                     )
                     self.status_var.set(f"登录成功：{session.name}")
+                    self._cancelled = True
                     self.destroy()
                     return
                 elif kind == "error":
                     self.status_var.set(str(payload))
         except queue.Empty:
             pass
-        if not self._cancelled:
-            self.after(100, self._poll)
+        if not self._cancelled and self.winfo_exists():
+            self._poll_after = self.after(100, self._poll)
+
+    def destroy(self) -> None:
+        self._cancelled = True
+        if self._poll_after is not None:
+            try:
+                self.after_cancel(self._poll_after)
+            except tk.TclError:
+                pass
+            self._poll_after = None
+        super().destroy()
 
     def _open_browser(self) -> None:
         uri = self.uri_var.get()

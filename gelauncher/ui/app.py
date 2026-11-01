@@ -51,7 +51,7 @@ class LauncherApp:
         self.task_token = None
         self.task_window: LogWindow | None = None
         self.crash_log = self.layout.root / "logs" / "gelauncher-ui-crash.log"
-        self.nav_buttons: dict[str, ttk.Button] = {}
+        self.nav_buttons: dict[str, object] = {}
 
         self.status_var = tk.StringVar(value="就绪")
         self.root.report_callback_exception = self._on_callback_exception
@@ -87,10 +87,8 @@ class LauncherApp:
             pass
 
     def _setup_style(self) -> None:
-        from gelauncher.ui import theme
-
-        theme.style_ttk(self.root)
-        ttk.Style().configure("Accent.TButton", font=("Microsoft YaHei UI", 10, "bold"))
+        # 界面已全部换成 CustomTkinter，不再需要 ttk 样式
+        return
 
     # ---------------------------------------------------------------- 布局
 
@@ -106,68 +104,45 @@ class LauncherApp:
             self.root.minsize(920, 560)
         else:
             self.root.minsize(int(920 * scale), int(560 * scale))
-        if theme.available():
-            import customtkinter as ctk
+        import customtkinter as ctk
 
-            sidebar = ctk.CTkFrame(self.root, corner_radius=0, width=150)
-            sidebar.grid(row=0, column=0, sticky="ns")
-            sidebar.grid_propagate(False)
-            sidebar.columnconfigure(0, weight=1)
-            ctk.CTkLabel(
+        sidebar = ctk.CTkFrame(self.root, corner_radius=0, width=150)
+        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid_propagate(False)
+        sidebar.columnconfigure(0, weight=1)
+        ctk.CTkLabel(
+            sidebar,
+            text="Ge 启动器",
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=14, weight="bold"),
+            anchor="w",
+        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(14, 12))
+        for index, (key, label, icon) in enumerate(NAV_ITEMS, start=1):
+            button = ctk.CTkButton(
                 sidebar,
-                text="Ge 启动器",
-                font=ctk.CTkFont(family="Microsoft YaHei UI", size=14, weight="bold"),
+                text=f"{icon}  {label}",
                 anchor="w",
-            ).grid(row=0, column=0, sticky="ew", padx=10, pady=(14, 12))
-            for index, (key, label, icon) in enumerate(NAV_ITEMS, start=1):
-                button = ctk.CTkButton(
-                    sidebar,
-                    text=f"{icon}  {label}",
-                    anchor="w",
-                    height=36,
-                    corner_radius=8,
-                    fg_color="transparent",
-                    text_color=theme.TEXT,
-                    hover_color=("#e2e8f0", "#2a2f37"),
-                    command=lambda name=key: self.show_page(name),
-                )
-                button.grid(row=index, column=0, sticky="ew", padx=8, pady=2)
-                self.nav_buttons[key] = button
-            sidebar.rowconfigure(len(NAV_ITEMS) + 1, weight=1)
-            self.status_label = ctk.CTkLabel(
-                sidebar,
-                textvariable=self.status_var,
-                text_color=theme.MUTED,
-                wraplength=130,
-                justify="left",
-                anchor="sw",
+                height=36,
+                corner_radius=8,
+                fg_color="transparent",
+                text_color=theme.TEXT,
+                hover_color=("#e2e8f0", "#2a2f37"),
+                command=lambda name=key: self.show_page(name),
             )
-            self.status_label.grid(
-                row=len(NAV_ITEMS) + 2, column=0, sticky="ew", padx=10, pady=(0, 10)
-            )
-            self.content = ctk.CTkFrame(self.root, corner_radius=0, fg_color=theme.BG)
-        else:
-            sidebar = ttk.Frame(self.root, padding=(10, 12, 6, 8), width=150)
-            sidebar.grid(row=0, column=0, sticky="ns")
-            sidebar.grid_propagate(False)
-            sidebar.columnconfigure(0, weight=1)
-            ttk.Label(sidebar, text="Ge 启动器", font=("Microsoft YaHei UI", 12, "bold")).grid(
-                row=0, column=0, sticky="w", pady=(0, 14)
-            )
-            for index, (key, label, icon) in enumerate(NAV_ITEMS, start=1):
-                button = ttk.Button(
-                    sidebar,
-                    text=f"{icon}  {label}",
-                    style="Nav.TButton",
-                    command=lambda name=key: self.show_page(name),
-                )
-                button.grid(row=index, column=0, sticky="ew", pady=2)
-                self.nav_buttons[key] = button
-            sidebar.rowconfigure(len(NAV_ITEMS) + 1, weight=1)
-            ttk.Label(sidebar, textvariable=self.status_var, foreground="#666", wraplength=130).grid(
-                row=len(NAV_ITEMS) + 2, column=0, sticky="sw"
-            )
-            self.content = ttk.Frame(self.root)
+            button.grid(row=index, column=0, sticky="ew", padx=8, pady=2)
+            self.nav_buttons[key] = button
+        sidebar.rowconfigure(len(NAV_ITEMS) + 1, weight=1)
+        self.status_label = ctk.CTkLabel(
+            sidebar,
+            textvariable=self.status_var,
+            text_color=theme.MUTED,
+            wraplength=130,
+            justify="left",
+            anchor="sw",
+        )
+        self.status_label.grid(
+            row=len(NAV_ITEMS) + 2, column=0, sticky="ew", padx=10, pady=(0, 10)
+        )
+        self.content = ctk.CTkFrame(self.root, corner_radius=0, fg_color=theme.BG)
 
         self.content.grid(row=0, column=1, sticky="nsew")
         self.content.columnconfigure(0, weight=1)
@@ -179,7 +154,7 @@ class LauncherApp:
             "settings": SettingsPage(self.content, self),
         }
         for page in self.pages.values():
-            page.grid(row=0, column=0, sticky="nsew")
+            page.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
             page.grid_remove()
 
         self.current_page = ""
@@ -261,7 +236,7 @@ class LauncherApp:
             if active:
                 # 先更新内容再显示：否则窗口会先闪一下旧列表再刷新
                 page.on_show()
-                page.grid()
+                page.grid(padx=10, pady=10)
             else:
                 page.grid_remove()
             button = self.nav_buttons.get(key)
