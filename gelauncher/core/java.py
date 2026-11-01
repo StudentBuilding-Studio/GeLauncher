@@ -237,3 +237,16 @@ def choose_java(
     if preferred_runtime is not None:
         return (preferred_runtime, False)
     return (max(runtimes, key=lambda item: item.major), False)
+
+
+_MISSING = object()
+
+
+def cached_java(path):
+    """只查探测缓存：命中返回 JavaRuntime|None，未探测返回 _MISSING（不要拿它当运行时）。"""
+    candidate = Path(path)
+    try:
+        key = (str(candidate.resolve()).lower(), candidate.stat().st_mtime_ns)
+    except OSError:
+        return None
+    return _PROBE_CACHE.get(key, _MISSING)

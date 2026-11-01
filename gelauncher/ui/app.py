@@ -69,6 +69,7 @@ class LauncherApp:
         self._build()
         self._restore_geometry()
         self.show_page("versions")
+        self.root.after(300, self._preload)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(80, self._poll)
 
@@ -182,6 +183,34 @@ class LauncherApp:
             page.grid_remove()
 
         self.current_page = ""
+
+    def _preload(self) -> None:
+        """启动后预热首次点击会用到的东西：Java 探测、jar 内嵌版本号、实例 JSON。"""
+        import threading
+
+        paths = list(self.java_choices())
+        layout = self.layout
+
+        def work() -> None:
+            from gelauncher.core.java import probe_java_cached
+
+            for path in paths:
+                try:
+                    probe_java_cached(path)
+                except Exception:  # noqa: BLE001
+                    pass
+            try:
+                versions = list(layout.installed_versions())
+            except OSError:
+                return
+            for version_id in versions:
+                try:
+                    layout.load_json(version_id)
+                    layout.actual_version(version_id)  # 读 jar 里的 version.json（带缓存）
+                except Exception:  # noqa: BLE001
+                    pass
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _restore_geometry(self) -> None:
         """默认窗口大小按屏幕逻辑分辨率算；CTk 的 geometry/minsize 会自动乘缩放。"""
@@ -1050,6 +1079,12 @@ class LauncherApp:
                                 refresh()
                             except tk.TclError:
                                 pass
+                elif kind == "java_hint":
+                    page = self.pages.get("versions")
+                    if page is not None:
+                        refresh = getattr(page, "_refresh_java_hint_async", None)
+                        if callable(refresh):
+                            refresh()
                 elif kind == "refresh_java":
                     page = self.pages.get("versions")
                     if page is not None:

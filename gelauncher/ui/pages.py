@@ -634,16 +634,52 @@ class VersionsPage(Page):
     def _detect_java(self) -> None:
         self.app.detect_java()
 
+    def _refresh_java_hint_async(self) -> None:
+        self._java_warm = False
+        self._update_java_hint()
+
     def refresh_java_choices(self) -> None:
         self.java_combo.configure(values=[self.AUTO_JAVA, *self.app.java_choices()])
         self._update_java_hint()
 
     def _update_java_hint(self) -> None:
         """在选择框下面显示"自动会选哪个 Java"，不满足版本要求时标红。"""
-        from gelauncher.core.java import choose_java, probe_java_cached
+        import threading
+
+        from gelauncher.core import java as java_core
 
         required = getattr(self, "_required_java", None)
         value = self.java_var.get().strip()
+        paths = list(self.app.java_choices())
+
+        # 第一次点开版本时，别在 UI 线程里跑 java -version（每个要几百毫秒）
+        preferred = getattr(self.app.config, "java_path", "")
+        if preferred and preferred not in paths:
+            paths.append(preferred)
+        missing = any(
+            java_core.cached_java(item) is java_core._MISSING for item in paths
+        )
+        if missing:
+            self.java_hint_var.set("正在检测 Java…")
+            if not getattr(self, "_java_warm", False):
+                self._java_warm = True
+
+                def warm() -> None:
+                    for item in paths:
+                        try:
+                            java_core.probe_java_cached(item)
+                        except Exception:  # noqa: BLE001
+                            pass
+                    try:
+                        self.app.messages.put(("java_hint", None))
+                    except Exception:  # noqa: BLE001 - 窗口已关
+                        pass
+
+                threading.Thread(target=warm, daemon=True).start()
+            return
+
+        from gelauncher.core.java import choose_java, probe_java_cached
+
         color = "#666"
         if not value or value == self.AUTO_JAVA:
             runtime, satisfied = choose_java(
