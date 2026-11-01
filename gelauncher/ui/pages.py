@@ -114,26 +114,22 @@ class VersionsPage(Page):
             row=0, column=4, padx=(6, 0)
         )
 
-        self.tree = ttk.Treeview(
+        from gelauncher.ui.instance_list import InstanceList
+
+        scale = getattr(self.app, "scale", 1.0)
+        self.tree = InstanceList(
             versions,
             columns=("version", "loader", "java"),
-            show="tree headings",
-            selectmode="browse",
+            headers=("实例", "版本", "加载器", "Java"),
+            column_widths=(
+                int(260 * scale),
+                int(110 * scale),
+                int(100 * scale),
+                int(80 * scale),
+            ),
+            on_row=self.open,
         )
-        self.tree.heading("#0", text="实例")
-        self.tree.heading("version", text="版本")
-        self.tree.heading("loader", text="加载器")
-        self.tree.heading("java", text="Java")
-        scale = getattr(self.app, "scale", 1.0)
-        self.tree.column("#0", width=int(220 * scale), stretch=True)
-        self.tree.column("version", width=int(100 * scale), anchor="center", stretch=False)
-        self.tree.column("loader", width=int(90 * scale), anchor="center", stretch=False)
-        self.tree.column("java", width=int(70 * scale), anchor="center", stretch=False)
-        self.tree.grid(row=1, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(versions, orient="vertical", command=self.tree.yview)
-        scroll.grid(row=1, column=1, sticky="ns")
-        self.tree.configure(yscrollcommand=scroll.set)
-        self.tree.bind("<ButtonRelease-1>", self._on_click)
+        self.tree.grid(row=1, column=0, columnspan=2, sticky="nsew")
 
     def _build_dir_list(self, parent) -> None:
         frame = ttk.LabelFrame(parent, text="目录列表", padding=6)
@@ -141,13 +137,15 @@ class VersionsPage(Page):
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
 
-        self.dir_tree = ttk.Treeview(frame, show="tree", selectmode="browse")
-        self.dir_tree.column("#0", width=int(200 * getattr(self.app, "scale", 1.0)), stretch=True)
-        self.dir_tree.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=self.dir_tree.yview)
-        scroll.grid(row=0, column=1, sticky="ns")
-        self.dir_tree.configure(yscrollcommand=scroll.set)
-        self.dir_tree.bind("<<TreeviewSelect>>", self._on_dir_selected)
+        from gelauncher.ui.instance_list import InstanceList
+
+        self.dir_tree = InstanceList(
+            frame,
+            headers=("游戏目录",),
+            column_widths=(int(230 * getattr(self.app, "scale", 1.0)),),
+            on_row=self._on_dir_row,
+        )
+        self.dir_tree.grid(row=0, column=0, columnspan=2, sticky="nsew")
 
         buttons = ttk.Frame(frame)
         buttons.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
@@ -217,10 +215,15 @@ class VersionsPage(Page):
             messagebox.showwarning("目录不存在", path)
 
     def _on_click(self, event) -> None:
-        row = self.tree.identify_row(event.y)
-        region = self.tree.identify_region(event.x, event.y)
-        if row and region in ("tree", "cell"):
-            self.open(row)
+        # 兼容旧调用；点击已由 InstanceList 的 on_row 回调处理
+        row = self.tree.selection()
+        if row:
+            self.open(row[0])
+
+    def _on_dir_row(self, directory: str) -> None:
+        if _same_path(directory, self.app.layout.root):
+            return
+        self.app.switch_game_dir(directory)
 
     def _install_vanilla(self) -> None:
         from gelauncher.ui.install_dialog import VanillaInstallDialog
