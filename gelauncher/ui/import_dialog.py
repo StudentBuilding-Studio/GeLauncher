@@ -9,7 +9,7 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from gelauncher.ui import theme
-from gelauncher.ui.widgets import close_later, button, label
+from gelauncher.ui.widgets import Dialog, close_later, button, label
 
 
 def _default_instance(name: str, fallback: str) -> str:
@@ -18,7 +18,7 @@ def _default_instance(name: str, fallback: str) -> str:
     return text[:48] or fallback
 
 
-class ModpackImportDialog(ctk.CTkToplevel):
+class ModpackImportDialog(Dialog):
     def __init__(self, parent: tk.Misc, app, archive, info, on_import) -> None:
         super().__init__(parent)
         self.app = app

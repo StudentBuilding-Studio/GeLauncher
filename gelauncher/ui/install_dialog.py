@@ -10,10 +10,10 @@ import customtkinter as ctk
 
 from gelauncher.ui import theme
 from gelauncher.ui.instance_list import InstanceList
-from gelauncher.ui.widgets import close_later, Combo, button, label
+from gelauncher.ui.widgets import Dialog, close_later, Combo, button, label
 
 
-class VanillaInstallDialog(ctk.CTkToplevel):
+class VanillaInstallDialog(Dialog):
     """列出官方所有版本（正式版 / 快照），选中一个交给启动器安装。"""
 
     MODES = (("正式版", "release"), ("快照", "snapshot"), ("全部", None))

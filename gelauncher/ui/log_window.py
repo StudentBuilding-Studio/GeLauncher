@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox
 
 import customtkinter as ctk
 
-from gelauncher.ui.widgets import button
+from gelauncher.ui.widgets import Dialog, button
 
 LEVEL_TAGS = {
     "ERROR": "#ff6b6b",
@@ -23,7 +23,7 @@ LEVEL_TAGS = {
 }
 
 
-class LogWindow(ctk.CTkToplevel):
+class LogWindow(Dialog):
     def __init__(
         self,
         master: tk.Misc,

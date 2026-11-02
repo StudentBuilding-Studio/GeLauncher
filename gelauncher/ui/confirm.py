@@ -13,10 +13,10 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from gelauncher.ui.widgets import button, close_later
+from gelauncher.ui.widgets import Dialog, button, close_later
 
 
-class DangerConfirmDialog(ctk.CTkToplevel):
+class DangerConfirmDialog(Dialog):
     def __init__(
         self,
         parent: tk.Misc,

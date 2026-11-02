@@ -19,10 +19,10 @@ import customtkinter as ctk
 
 from gelauncher.core import microsoft
 from gelauncher.ui import theme
-from gelauncher.ui.widgets import button, label
+from gelauncher.ui.widgets import Dialog, button, label
 
 
-class MicrosoftLoginDialog(ctk.CTkToplevel):
+class MicrosoftLoginDialog(Dialog):
     def __init__(self, master: tk.Misc, client_id: str, authority: str = "consumers") -> None:
         super().__init__(master)
         # 用户没配就用启动器内置的 client id（正常情况下用户完全不需要关心这个）

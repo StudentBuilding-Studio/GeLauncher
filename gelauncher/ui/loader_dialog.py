@@ -9,10 +9,10 @@ from tkinter import messagebox
 import customtkinter as ctk
 
 from gelauncher.ui.instance_list import InstanceList
-from gelauncher.ui.widgets import close_later,  button, label
+from gelauncher.ui.widgets import Dialog, close_later,  button, label
 
 
-class LoaderInstallDialog(ctk.CTkToplevel):
+class LoaderInstallDialog(Dialog):
     """拉取某个实例（对应真实 MC 版本）可用的加载器版本，选一个装进去。"""
 
     def __init__(self, parent: tk.Misc, app, instance: str, actual: str, kind: str, on_choose) -> None:

@@ -11,13 +11,13 @@ import tkinter as tk
 
 import customtkinter as ctk
 
-from gelauncher.ui.widgets import button, close_later, label
+from gelauncher.ui.widgets import Dialog, button, close_later, label
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_]+$")
 _HINT = "只能用大小写英文字母、数字和下划线（_），不要用中文、空格或特殊符号。"
 
 
-class OfflineAccountDialog(ctk.CTkToplevel):
+class OfflineAccountDialog(Dialog):
     def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent)
         self.result: str | None = None

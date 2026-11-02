@@ -147,3 +147,16 @@ def settings_row(parent, title: str, subtitle: str = "", control_factory=None, *
         control = control_factory(row)
         control.pack(side="right", padx=(14, 0))
     return row
+
+
+class Dialog(ctk.CTkToplevel):
+    """所有对话框的基类：自动使用启动器图标，而不是 CTk 的占位图标。"""
+
+    def __init__(self, master=None, **kwargs) -> None:
+        super().__init__(master, **kwargs)
+        try:
+            from gelauncher.ui import theme
+
+            theme.apply_window_icon(self)
+        except Exception:  # noqa: BLE001 - 图标只是装饰
+            pass
