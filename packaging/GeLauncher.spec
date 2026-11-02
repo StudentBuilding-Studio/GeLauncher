@@ -15,6 +15,12 @@ datas = collect_data_files("customtkinter")
 if os.path.isfile(ICON):
     datas.append((ICON, "."))
 
+# 窗口图标用多尺寸 PNG（标题栏比 ico 里的小图清楚）
+for _size in (64, 128, 256):
+    _png = os.path.join(SPECPATH, f"GeLauncher-{_size}.png")
+    if os.path.isfile(_png):
+        datas.append((_png, "."))
+
 a = Analysis(
     ["entry.py"],
     pathex=[".."],

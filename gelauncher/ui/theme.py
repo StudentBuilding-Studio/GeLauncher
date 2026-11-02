@@ -65,7 +65,38 @@ def _icon_path() -> str | None:
     return None
 
 
+def _icon_pngs() -> list[str]:
+    """窗口图标用 PNG：iconbitmap 只会拿很小的那帧，标题栏会糊。"""
+    import sys
+    from pathlib import Path
+
+    bases = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        bases.append(Path(sys._MEIPASS))
+    bases.append(Path(__file__).resolve().parents[2] / "packaging")
+    for base in bases:
+        found = [
+            str(base / f"GeLauncher-{size}.png")
+            for size in (256, 128, 64)
+            if (base / f"GeLauncher-{size}.png").is_file()
+        ]
+        if found:
+            return found
+    return []
+
+
 def apply_window_icon(root) -> None:
+    pngs = _icon_pngs()
+    if pngs:
+        try:
+            import tkinter as tk
+
+            images = [tk.PhotoImage(file=path) for path in pngs]
+            root.iconphoto(True, *images)
+            root._gelauncher_icons = images  # 防止被 GC 掉后图标消失
+            return
+        except Exception:  # noqa: BLE001 - 退回 ico
+            pass
     path = _icon_path()
     if path is None:
         return
