@@ -1275,6 +1275,27 @@ class SettingsPage(Page):
 
         self._row(basic_card.body, "游戏 Java", "", _java_control)
 
+        self.java_list_var = tk.StringVar(value="")
+        self.java_list_label = ctk.CTkLabel(
+            basic_card.body,
+            textvariable=self.java_list_var,
+            anchor="w",
+            justify="left",
+            text_color=theme.MUTED,
+            wraplength=620,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
+        )
+        self.java_list_label.pack(fill="x", padx=14, pady=(0, 8))
+
+        def _refit_java_list(event) -> None:
+            from gelauncher.ui import theme as theme_mod
+
+            self.java_list_label.configure(
+                wraplength=max(int(event.width / theme_mod.scale_factor()) - 28, 260)
+            )
+
+        basic_card.body.bind("<Configure>", _refit_java_list, add="+")
+
         self.memory_var = tk.StringVar()
 
         def _memory_control(row):
@@ -1428,26 +1449,29 @@ class SettingsPage(Page):
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
         self.env_label.pack(fill="x", padx=14, pady=(6, 2))
-        self.java_list_var = tk.StringVar(value="")
-        self.java_list_label = ctk.CTkLabel(
-            env_card.body,
-            textvariable=self.java_list_var,
-            anchor="w",
-            justify="left",
-            text_color=theme.MUTED,
-            wraplength=760,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
-        )
-        self.java_list_label.pack(fill="x", padx=14, pady=(2, 8))
 
         def _refit_env(event) -> None:
             from gelauncher.ui import theme as theme_mod
 
             wrap = max(int(event.width / theme_mod.scale_factor()) - 24, 260)
             self.env_label.configure(wraplength=wrap)
-            self.java_list_label.configure(wraplength=wrap)
 
         env_card.body.bind("<Configure>", _refit_env, add="+")
+
+        from gelauncher.ui.widgets import button
+
+        detect_row = ctk.CTkFrame(env_card.body, fg_color="transparent")
+        detect_row.pack(fill="x", padx=14, pady=(10, 6))
+        ctk.CTkLabel(
+            detect_row,
+            text="重新扫描本机已安装的 Java，结果显示在「常规 → 游戏 Java」下方",
+            anchor="w",
+            justify="left",
+            wraplength=520,
+            text_color=theme.MUTED,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
+        ).pack(side="left", fill="x", expand=True)
+        button(detect_row, "检测", self.detect_java, width=80).pack(side="right")
 
         # 关于
         about = self._setting_sections["about"]
@@ -1582,6 +1606,8 @@ class SettingsPage(Page):
             self.java_list_var.set(
                 "\n".join(f"Java {major}（{path}）" for major, path in runtimes)
             )
+        else:
+            self.java_list_var.set("还没有检测到 Java，点下方「检测」扫描本机")
 
     def _open_repo(self) -> None:
         import webbrowser
