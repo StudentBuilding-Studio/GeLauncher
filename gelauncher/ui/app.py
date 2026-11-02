@@ -1099,7 +1099,8 @@ class LauncherApp:
                         page._refresh_running_state()
                 elif kind == "stopped":
                     page = self.pages.get("versions")
-                    if isinstance(page, VersionsPage) and page.current == message[1]:
+                    name = str(message[1]).split("|", 1)[-1]
+                    if isinstance(page, VersionsPage) and page.current == name:
                         page._refresh_running_state()
                     self.processes.pop(message[1], None)
                 elif kind == "refresh":
