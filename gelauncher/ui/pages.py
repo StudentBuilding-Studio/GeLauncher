@@ -1509,7 +1509,7 @@ class SettingsPage(Page):
         detect_row.pack(fill="x", padx=14, pady=(10, 6))
         ctk.CTkLabel(
             detect_row,
-            text="重新扫描本机已安装的 Java，结果显示在「常规 → 游戏 Java」下方",
+            text="重新扫描本机已安装的 Java",
             anchor="w",
             justify="left",
             wraplength=520,
