@@ -139,7 +139,7 @@ powershell -ExecutionPolicy Bypass -File packaging/build.ps1
 
 产物是目录分发形式：`dist/GeLauncher/GeLauncher.exe`（同目录下的 `_internal/` 要一起带）。
 CustomTkinter 的主题/字体资源会由 spec 里的 `collect_data_files("customtkinter")` 一并打进去。
-exe 图标来自 `packaging/GeLauncher.ico`（由仓库根目录的 `icon瓜.png` 生成，含 16～256 多尺寸）；exe 带完整版本资源和 manifest。
+exe 图标来自 `packaging/GeLauncher.ico`（由仓库根目录的 `icon瓜.png` 生成，含 16～256 多尺寸，缩放用最近邻保持像素风）；窗口图标用同目录的 `GeLauncher-<n>.png`。改图后运行 `python packaging/make_icon.py` 重新生成。exe 带完整版本资源和 manifest。
 
 代码签名（消除 SmartScreen 警告）需要自备受信任的证书，配置方式见 [packaging/signing.md](packaging/signing.md)。
 

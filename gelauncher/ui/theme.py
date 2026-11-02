@@ -74,10 +74,11 @@ def _icon_pngs() -> list[str]:
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         bases.append(Path(sys._MEIPASS))
     bases.append(Path(__file__).resolve().parents[2] / "packaging")
+    sizes = (16, 24, 32, 48, 64, 128, 256)
     for base in bases:
         found = [
             str(base / f"GeLauncher-{size}.png")
-            for size in (256, 128, 64)
+            for size in sizes
             if (base / f"GeLauncher-{size}.png").is_file()
         ]
         if found:
@@ -94,6 +95,12 @@ def apply_window_icon(root) -> None:
             images = [tk.PhotoImage(file=path) for path in pngs]
             root.iconphoto(True, *images)
             root._gelauncher_icons = images  # 防止被 GC 掉后图标消失
+            # CustomTkinter 在 after(200) 时会检查这个标志；
+            # 不置位的话它会用自带的占位图标覆盖我们刚设置的窗口图标
+            try:
+                root._iconbitmap_method_called = True
+            except Exception:  # noqa: BLE001
+                pass
             return
         except Exception:  # noqa: BLE001 - 退回 ico
             pass
@@ -127,6 +134,9 @@ def make_root() -> tk.Tk:
     ctk.set_default_color_theme("blue")
     root = ctk.CTk()
     apply_window_icon(root)
+    # CTk 在 after(200) 里还有一次标题栏图标处理，500ms 后再兜一遍，
+    # 确保最终显示的是我们的图标（而不是它自带的占位图标）
+    root.after(500, lambda: apply_window_icon(root))
     return root
 
 
