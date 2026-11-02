@@ -1,7 +1,9 @@
-"""自绘标题栏：大图标 + 可调字体 + 最小化/最大化/关闭。
+"""自绘标题栏：大图标 + 可调字体 + 最小化/关闭。
 
 系统标题栏的图标在 100% DPI 下只有 16px，没法变大；这里去掉系统标题栏
-（保留 WS_THICKFRAME，所以边缘缩放/贴边分屏仍然可用），自己画一条。
+（保留 WS_THICKFRAME，所以边缘缩放仍然可用），自己画一条。
+
+不提供最大化按钮：去掉系统标题栏后最大化会盖住任务栏，体验不好。
 """
 
 from __future__ import annotations
@@ -46,10 +48,8 @@ class TitleBar(ctk.CTkFrame):
             corner_radius=0,
             fg_color=self._bg,
         )
-        self.grid_propagate(False)
         self._on_close = on_close
         self._drag_offset: tuple[int, int, int, int] | None = None
-        self._maximized = False
 
         scale = theme.scale_factor()
         icon_px = max(int(ICON_SIZE * scale), 16)
@@ -89,7 +89,6 @@ class TitleBar(ctk.CTkFrame):
         for index, (name, glyph, command) in enumerate(
             (
                 ("min", "─", self._minimize),
-                ("max", "□", self._toggle_max),
                 ("close", "✕", self._close),
             ),
             start=2,
@@ -111,9 +110,7 @@ class TitleBar(ctk.CTkFrame):
         self._buttons["close"].configure(hover_color="#c42b1c", text_color="#ffffff")
 
         for widget in (self, icon, self._title):
-            widget.bind("<Button-1>", self._start_drag, add="+")
-            widget.bind("<B1-Motion>", self._on_drag, add="+")
-            widget.bind("<Double-Button-1>", lambda _e: self._toggle_max(), add="+")
+            widget.bind("<ButtonPress-1>", self._start_drag, add="+")
 
         theme.on_change(self._on_theme)
         self.bind("<Destroy>", lambda _e: theme.off_change(self._on_theme), add="+")
@@ -128,57 +125,44 @@ class TitleBar(ctk.CTkFrame):
                 self._icon_label.configure(bg=self._bg)
             except tk.TclError:
                 pass
-            self._buttons["close"].configure(
-                fg_color="transparent", text_color=theme.TEXT
-            )
-            for name, button in self._buttons.items():
+            for button in self._buttons.values():
                 button.configure(text_color=theme.TEXT)
         except tk.TclError:
             pass
 
     # ------------------------------------------------------------------ 拖动
 
-    def _window(self) -> tk.Misc:
-        return self.winfo_toplevel()
-
     def _start_drag(self, event) -> None:
-        root = self._window()
+        """优先用 Windows 原生移动循环：自己 geometry 拖动会出现残影。"""
+        root = self.winfo_toplevel()
+        if sys.platform == "win32":
+            try:
+                import ctypes
+
+                hwnd = int(root.wm_frame(), 16)
+                user32 = ctypes.windll.user32
+                user32.ReleaseCapture()
+                # WM_NCLBUTTONDOWN + HTCAPTION：交给系统拖，平滑且自带吸附
+                user32.SendMessageW(hwnd, 0x00A1, 2, 0)
+                return
+            except Exception:  # noqa: BLE001
+                pass
+        # 非 Windows 兜底：记录偏移，用 <B1-Motion> 移动
         self._drag_offset = (event.x_root, event.y_root, root.winfo_x(), root.winfo_y())
+        self.bind("<B1-Motion>", self._on_drag, add="+")
 
     def _on_drag(self, event) -> None:
         if self._drag_offset is None:
             return
-        root = self._window()
-        if self._maximized:
-            # 最大化时拖动：先还原再跟手
-            root.state("normal")
-            self._maximized = False
-            self._buttons["max"].configure(text="□")
-            self._drag_offset = (
-                event.x_root,
-                event.y_root,
-                root.winfo_x(),
-                root.winfo_y(),
-            )
-            return
         x0, y0, wx, wy = self._drag_offset
-        root.geometry(f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}")
+        self.winfo_toplevel().geometry(
+            f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}"
+        )
 
     # ------------------------------------------------------------------ 按钮
 
     def _minimize(self) -> None:
-        self._window().iconify()
-
-    def _toggle_max(self) -> None:
-        root = self._window()
-        if root.state() == "zoomed":
-            root.state("normal")
-            self._maximized = False
-            self._buttons["max"].configure(text="□")
-        else:
-            root.state("zoomed")
-            self._maximized = True
-            self._buttons["max"].configure(text="❐")
+        self.winfo_toplevel().iconify()
 
     def _close(self) -> None:
         self._on_close()
