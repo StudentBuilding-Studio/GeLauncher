@@ -811,3 +811,9 @@ def test_reset_global_defaults(app, monkeypatch):
     assert app.config.max_memory_mb == 2048
     assert app.config.jvm_args == ""
     assert app.config.process_priority == "normal"
+
+def test_titlebar_does_not_override_tkinter_root_helper(app):
+    """TitleBar 不能定义 _root()：tkinter.Misc 自带同名方法，覆盖会递归崩溃。"""
+    import tkinter as tk
+
+    assert type(app.titlebar)._root is tk.Misc._root

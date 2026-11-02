@@ -138,17 +138,17 @@ class TitleBar(ctk.CTkFrame):
 
     # ------------------------------------------------------------------ 拖动
 
-    def _root(self) -> tk.Misc:
+    def _window(self) -> tk.Misc:
         return self.winfo_toplevel()
 
     def _start_drag(self, event) -> None:
-        root = self._root()
+        root = self._window()
         self._drag_offset = (event.x_root, event.y_root, root.winfo_x(), root.winfo_y())
 
     def _on_drag(self, event) -> None:
         if self._drag_offset is None:
             return
-        root = self._root()
+        root = self._window()
         if self._maximized:
             # 最大化时拖动：先还原再跟手
             root.state("normal")
@@ -167,10 +167,10 @@ class TitleBar(ctk.CTkFrame):
     # ------------------------------------------------------------------ 按钮
 
     def _minimize(self) -> None:
-        self._root().iconify()
+        self._window().iconify()
 
     def _toggle_max(self) -> None:
-        root = self._root()
+        root = self._window()
         if root.state() == "zoomed":
             root.state("normal")
             self._maximized = False
