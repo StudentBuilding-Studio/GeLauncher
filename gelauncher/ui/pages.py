@@ -1235,6 +1235,9 @@ class AccountsPage(Page):
 
 
 class SettingsPage(Page):
+    #: 全局 Java 默认值里的“自动”选项
+    AUTO_JAVA = "自动（按版本查找）"
+
     title = "设置"
 
     def _row(self, parent, title: str, subtitle: str = "", control_factory=None):
@@ -1305,7 +1308,10 @@ class SettingsPage(Page):
 
             frame = ctk.CTkFrame(row, fg_color="transparent")
             self.java_combo = Combo(
-                frame, variable=self.java_var, values=self.app.java_choices(), width=300
+                frame,
+                variable=self.java_var,
+                values=[self.AUTO_JAVA, *self.app.java_choices()],
+                width=300,
             )
             self.java_combo.pack(side="left")
             button(frame, "…", self.browse_java, width=38, height=30).pack(
@@ -1611,7 +1617,7 @@ class SettingsPage(Page):
         config = self.app.config
         self._loading = True
         self.memory_var.set(str(config.max_memory_mb))
-        self.java_var.set(config.java_path)
+        self.java_var.set(config.java_path or self.AUTO_JAVA)
         self.log_window_var.set(bool(config.show_log_window))
         source = next(
             (text for text, mode in self.source_labels.items() if mode == config.download_source),
@@ -1666,14 +1672,14 @@ class SettingsPage(Page):
         self.app.detect_java()
 
     def refresh_java_choices(self) -> None:
-        self.java_combo.configure(values=self.app.java_choices())
+        self.java_combo.configure(values=[self.AUTO_JAVA, *self.app.java_choices()])
         runtimes = getattr(self.app, "detected_javas", [])
         if runtimes:
             self.java_list_var.set(
                 "\n".join(f"Java {major}（{path}）" for major, path in runtimes)
             )
         else:
-            self.java_list_var.set("还没有检测到 Java，点下方「检测」扫描本机")
+            self.java_list_var.set("还没有检测到 Java，点右侧「检测」扫描本机")
 
     def _reset_defaults(self) -> None:
         from gelauncher.config import Config as ConfigClass
@@ -1746,8 +1752,11 @@ class SettingsPage(Page):
                 config.max_memory_mb = int(text)
             except ValueError:
                 return  # 正在输入，先别存
-        if self.java_var.get().strip() or config.java_path:
-            config.java_path = self.java_var.get().strip()
+        java_value = self.java_var.get().strip()
+        if java_value == self.AUTO_JAVA:
+            config.java_path = ""
+        elif java_value or config.java_path:
+            config.java_path = java_value
         config.show_log_window = bool(self.log_window_var.get())
         config.download_source = self.source_labels.get(self.source_var.get(), "auto")
         config.appearance = self.appearance_labels.get(
