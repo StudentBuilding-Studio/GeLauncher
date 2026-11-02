@@ -543,6 +543,7 @@ class VersionsPage(Page):
                 variable=self.priority_var,
                 values=list(self.priority_labels),
                 width=160,
+                readonly=True,
             ),
         )
 
@@ -1352,6 +1353,7 @@ class SettingsPage(Page):
                 variable=self.default_priority_var,
                 values=list(self.priority_labels),
                 width=160,
+                readonly=True,
             )
 
         self._row(
@@ -1372,7 +1374,11 @@ class SettingsPage(Page):
             from gelauncher.ui.widgets import Combo
 
             self.source_combo = Combo(
-                row, variable=self.source_var, values=list(self.source_labels), width=300
+                row,
+                variable=self.source_var,
+                values=list(self.source_labels),
+                width=300,
+                readonly=True,
             )
             return self.source_combo
 
@@ -1401,6 +1407,7 @@ class SettingsPage(Page):
                 variable=self.appearance_var,
                 values=list(self.appearance_labels),
                 width=180,
+                readonly=True,
                 command=self._apply_appearance,
             )
             return self.appearance_combo

@@ -12,8 +12,12 @@ from . import theme
 class Combo(ctk.CTkComboBox):
     """CTkComboBox + Treeview 风格的 cget("values")/configure(values=...)，方便测试和复用。"""
 
-    def __init__(self, master, *, values=(), variable=None, width=200, **kwargs) -> None:
+    def __init__(
+        self, master, *, values=(), variable=None, width=200, readonly: bool = False, **kwargs
+    ) -> None:
         self._values = list(values)
+        if readonly:
+            kwargs.setdefault("state", "readonly")
         super().__init__(
             master,
             values=self._values,
