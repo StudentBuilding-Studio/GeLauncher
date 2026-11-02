@@ -208,7 +208,6 @@ class VersionsPage(Page):
         self.dir_tree.delete(*self.dir_tree.get_children())
         for directory in self.app.config.game_dirs:
             label = Path(directory).name or directory
-            current = _same_path(directory, self.app.layout.root)
             self.dir_tree.insert(
                 "",
                 "end",
