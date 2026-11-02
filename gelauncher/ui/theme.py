@@ -83,6 +83,13 @@ def apply_window_icon(root) -> None:
             root._iconbitmap_method_called = True
         except Exception:  # noqa: BLE001
             pass
+        # 任务栏/Alt+Tab 用系统真实尺寸重新加载一次，避免小图放大
+        try:
+            from gelauncher.ui.winframe import apply_hicon
+
+            root.after(150, lambda: apply_hicon(root, path))
+        except Exception:  # noqa: BLE001
+            pass
     except Exception:  # noqa: BLE001 - 非 Windows/缺 ico 时忽略
         pass
 
