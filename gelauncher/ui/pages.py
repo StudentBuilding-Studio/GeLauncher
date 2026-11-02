@@ -196,7 +196,7 @@ class VersionsPage(Page):
         button(buttons, "添加目录…", self._add_dir).grid(
             row=0, column=0, sticky="ew", padx=(0, 3)
         )
-        button(buttons, "打开游戏目录", self._open_selected_dir).grid(
+        button(buttons, "打开目录", self._open_selected_dir).grid(
             row=0, column=1, sticky="ew", padx=(3, 0)
         )
         button(card.body, "从列表移除", self._remove_dir).grid(
