@@ -139,6 +139,9 @@ def test_accounts_page_add_offline_and_select(app, monkeypatch):
     assert accounts.tree.item("offline|Player", "text").startswith("●")
 
     accounts.tree.selection_set("offline|Steve")
+    from gelauncher.ui import confirm
+
+    monkeypatch.setattr(confirm, "ask_danger", lambda *a, **k: True)
     accounts.remove_selected()
     assert "Steve" not in app.config.accounts
     assert app.config.selected_account in app.config.accounts
@@ -792,3 +795,19 @@ def test_reset_instance_settings(app, monkeypatch):
     assert settings["max_memory_mb"] == app.config.max_memory_mb
     assert settings["jvm_args"] == app.config.jvm_args
     assert settings["process_priority"] == app.config.process_priority
+
+def test_reset_global_defaults(app, monkeypatch):
+    from gelauncher.ui import confirm
+
+    app.config.max_memory_mb = 8192
+    app.config.jvm_args = "-Xms2G"
+    app.config.process_priority = "high"
+    app.config.save()
+    monkeypatch.setattr(confirm, "ask_confirm", lambda *a, **k: True)
+    app.show_page("settings")
+    page = app.pages["settings"]
+    page._reset_defaults()
+
+    assert app.config.max_memory_mb == 2048
+    assert app.config.jvm_args == ""
+    assert app.config.process_priority == "normal"

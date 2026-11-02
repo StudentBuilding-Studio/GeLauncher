@@ -377,15 +377,10 @@ class VersionsPage(Page):
             text_color=theme.MUTED,
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         ).pack(anchor="w", pady=(2, 0))
-        actions = ctk.CTkFrame(header, fg_color="transparent")
-        actions.grid(row=0, column=2, sticky="e")
-        button(actions, "重置为默认", self._reset_instance_settings, width=110).pack(
-            side="left", padx=(0, 8)
-        )
         self.start_button = button(
-            actions, "▶ 启动游戏", self._start, accent=True, width=140, height=40
+            header, "▶ 启动游戏", self._start, accent=True, width=140, height=40
         )
-        self.start_button.pack(side="left")
+        self.start_button.grid(row=0, column=2, sticky="e")
 
         body = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
@@ -551,6 +546,13 @@ class VersionsPage(Page):
                 width=160,
                 readonly=True,
             ),
+        )
+
+        self._section_row(
+            instance,
+            "重置为默认",
+            "只重置这个实例在「实例设置」里的项，恢复成「设置」里的默认值",
+            lambda row: button(row, "重置", self._reset_instance_settings, width=90),
         )
 
         # ---------------- 实例信息 ----------------
@@ -1209,7 +1211,14 @@ class AccountsPage(Page):
         name = entry["name"]
         kind = entry["kind"]
         label_text = "微软账号" if kind == "msa" else "离线账号"
-        if not messagebox.askyesno("删除账号", f"删掉{label_text} {name}？"):
+        from gelauncher.ui.confirm import ask_danger
+
+        if not ask_danger(
+            self,
+            title="删除账号",
+            message=f"删掉{label_text}「{name}」？",
+            confirm_text="删除",
+        ):
             return
         if kind == "msa":
             self.app.config.remove_msa_account(name)
@@ -1438,6 +1447,18 @@ class SettingsPage(Page):
 
         self._row(other_card.body, "下载源", "自动 = 官方优先，慢/不通时切镜像", _source_control)
 
+        def _reset_control(row):
+            from gelauncher.ui.widgets import button
+
+            return button(row, "恢复默认", self._reset_defaults, width=100)
+
+        self._row(
+            other_card.body,
+            "恢复默认设置",
+            "把这里的默认值恢复成启动器初始状态（不影响账号、游戏目录和实例）",
+            _reset_control,
+        )
+
         # 外观
         appearance = self._setting_sections["appearance"]
         appearance_card = Card(appearance, "主题")
@@ -1653,6 +1674,40 @@ class SettingsPage(Page):
             )
         else:
             self.java_list_var.set("还没有检测到 Java，点下方「检测」扫描本机")
+
+    def _reset_defaults(self) -> None:
+        from gelauncher.config import Config as ConfigClass
+        from gelauncher.ui import theme
+        from gelauncher.ui.confirm import ask_confirm
+
+        if not ask_confirm(
+            self,
+            title="恢复默认设置",
+            message=(
+                "把「设置」里的默认值恢复成启动器初始状态？\n\n"
+                "不影响账号、游戏目录，也不影响各实例自己的设置。"
+            ),
+            confirm_text="恢复",
+        ):
+            return
+        defaults = ConfigClass()
+        config = self.app.config
+        for field in (
+            "max_memory_mb",
+            "java_path",
+            "show_log_window",
+            "download_source",
+            "appearance",
+            "width",
+            "height",
+            "jvm_args",
+            "process_priority",
+        ):
+            setattr(config, field, getattr(defaults, field))
+        config.save()
+        theme.set_mode(config.appearance)
+        self.on_show()
+        self.app.set_status("默认设置已恢复")
 
     def _open_repo(self) -> None:
         import webbrowser
