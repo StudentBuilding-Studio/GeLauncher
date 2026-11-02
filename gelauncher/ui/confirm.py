@@ -27,13 +27,14 @@ class DangerConfirmDialog(ctk.CTkToplevel):
         cancel_text: str = "取消",
         danger: bool = True,
     ) -> None:
-        super().__init__(parent)
+        # wm transient 的 master 必须是 toplevel；传 Frame 进来会得到一个
+        # "附着在 frame 上"的怪窗口（可能一直不显示），这里统一解析到顶层窗口
+        master = parent.winfo_toplevel() if hasattr(parent, "winfo_toplevel") else parent
+        super().__init__(master)
         self.result = False
         self.title(title)
-        self.transient(parent)
+        self.transient(master)
         self.resizable(False, False)
-        # 先藏起来，等内容排完再算尺寸和位置，避免出现"先大后跳"
-        self.withdraw()
 
         try:
             parent_width = parent.winfo_width()
@@ -73,7 +74,9 @@ class DangerConfirmDialog(ctk.CTkToplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Escape>", lambda _e: self._cancel())
-        self.after_idle(lambda: self._fit_and_center(parent))
+        # 立刻算好尺寸并显示：调用方紧接着会 wait_window，
+        # 不能依赖 after_idle，否则窗口可能一直不可见（表现为卡死、没有弹窗）
+        self._fit_and_center(master)
         self.after(120, self._grab)
 
     def _fit_and_center(self, parent: tk.Misc) -> None:
@@ -93,9 +96,13 @@ class DangerConfirmDialog(ctk.CTkToplevel):
             y = py + max((ph - height) // 2, 0)
             # 绕过 CTk 的 geometry 缩放：这里用的已经是实际像素
             tk.Toplevel.geometry(self, f"{width}x{height}+{x}+{y}")
-            self.deiconify()
-        except tk.TclError:
+        except Exception:  # noqa: BLE001 - 尺寸算错也不能把窗口藏起来
             pass
+        finally:
+            try:
+                self.lift()
+            except tk.TclError:
+                pass
 
     def _grab(self) -> None:
         try:
