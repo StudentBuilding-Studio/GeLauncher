@@ -213,7 +213,7 @@ class VersionsPage(Page):
                 "",
                 "end",
                 iid=directory,
-                text=f"{'● ' if current else ''}{label}",
+                text=label,
                 values=(directory,),
             )
         current = str(self.app.layout.root)
