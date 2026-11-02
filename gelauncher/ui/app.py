@@ -95,7 +95,8 @@ class LauncherApp:
     def _build(self) -> None:
         self.root.title(f"Ge 启动器 {__version__}")
         self.root.columnconfigure(1, weight=1)
-        self.root.rowconfigure(0, weight=1)
+        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(0, weight=0)
 
         from gelauncher.ui import theme
 
@@ -106,17 +107,21 @@ class LauncherApp:
             self.root.minsize(int(920 * scale), int(560 * scale))
         import customtkinter as ctk
 
+        from gelauncher.ui.titlebar import TitleBar
+        from gelauncher.ui.winframe import hide_native_titlebar
+
+        self.titlebar = TitleBar(
+            self.root, title=f"Ge 启动器 {__version__}", on_close=self._on_close
+        )
+        self.titlebar.grid(row=0, column=0, columnspan=2, sticky="ew")
+        # 去掉系统标题栏（保留窗口边框，仍可缩放/贴边分屏）
+        self.root.after(30, lambda: hide_native_titlebar(self.root))
+
         sidebar = ctk.CTkFrame(self.root, corner_radius=0, width=150)
-        sidebar.grid(row=0, column=0, sticky="ns")
+        sidebar.grid(row=1, column=0, sticky="ns")
         sidebar.grid_propagate(False)
         sidebar.columnconfigure(0, weight=1)
-        ctk.CTkLabel(
-            sidebar,
-            text="Ge 启动器",
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=14, weight="bold"),
-            anchor="w",
-        ).grid(row=0, column=0, sticky="ew", padx=10, pady=(14, 12))
-        for index, (key, label, icon) in enumerate(NAV_ITEMS, start=1):
+        for index, (key, label, icon) in enumerate(NAV_ITEMS, start=0):
             button = ctk.CTkButton(
                 sidebar,
                 text=f"{icon}  {label}",
@@ -131,7 +136,7 @@ class LauncherApp:
             )
             button.grid(row=index, column=0, sticky="ew", padx=8, pady=2)
             self.nav_buttons[key] = button
-        sidebar.rowconfigure(len(NAV_ITEMS) + 1, weight=1)
+        sidebar.rowconfigure(len(NAV_ITEMS), weight=1)
         self.status_label = ctk.CTkLabel(
             sidebar,
             textvariable=self.status_var,
@@ -142,11 +147,11 @@ class LauncherApp:
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
         self.status_label.grid(
-            row=len(NAV_ITEMS) + 2, column=0, sticky="ew", padx=10, pady=(0, 10)
+            row=len(NAV_ITEMS) + 1, column=0, sticky="ew", padx=10, pady=(0, 10)
         )
         self.content = ctk.CTkFrame(self.root, corner_radius=0, fg_color=theme.BG)
 
-        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content.grid(row=1, column=1, sticky="nsew")
         self.content.columnconfigure(0, weight=1)
         self.content.rowconfigure(0, weight=1)
 
