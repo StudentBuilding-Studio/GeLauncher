@@ -22,6 +22,7 @@ class DangerConfirmDialog(ctk.CTkToplevel):
         message: str,
         confirm_text: str = "删除",
         cancel_text: str = "取消",
+        danger: bool = True,
     ) -> None:
         super().__init__(parent)
         self.result = False
@@ -56,9 +57,9 @@ class DangerConfirmDialog(ctk.CTkToplevel):
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.pack(fill="x", padx=24, pady=(0, 20))
         button(buttons, cancel_text, self._cancel, width=110).pack(side="right")
-        button(buttons, confirm_text, self._confirm, width=110, danger=True).pack(
-            side="right", padx=(0, 10)
-        )
+        button(
+            buttons, confirm_text, self._confirm, width=110, danger=danger, accent=not danger
+        ).pack(side="right", padx=(0, 10))
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self.bind("<Escape>", lambda _e: self._cancel())
@@ -89,6 +90,28 @@ def ask_danger(
 ) -> bool:
     dialog = DangerConfirmDialog(
         parent, title=title, message=message, confirm_text=confirm_text
+    )
+    try:
+        parent.wait_window(dialog)
+    except tk.TclError:
+        return False
+    return bool(dialog.result)
+
+
+def ask_confirm(
+    parent: tk.Misc,
+    *,
+    title: str,
+    message: str,
+    confirm_text: str = "确定",
+) -> bool:
+    """普通确认框（确认按钮是主色蓝，不是危险红）。"""
+    dialog = DangerConfirmDialog(
+        parent,
+        title=title,
+        message=message,
+        confirm_text=confirm_text,
+        danger=False,
     )
     try:
         parent.wait_window(dialog)

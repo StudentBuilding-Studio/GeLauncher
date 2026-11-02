@@ -771,3 +771,24 @@ def test_detail_priority_and_settings_defaults(app):
     assert app.config.height == 720
     assert app.config.jvm_args == "-Xms1G"
     assert app.config.process_priority == "above"
+
+def test_reset_instance_settings(app, monkeypatch):
+    from gelauncher.ui import confirm
+
+    versions = app.pages["versions"]
+    versions.open("1.21.8")
+    app.config.update_instance(
+        "1.21.8",
+        root=app.layout.root,
+        max_memory_mb=8192,
+        jvm_args="-Xms2G",
+        process_priority="high",
+    )
+    app.config.save()
+    monkeypatch.setattr(confirm, "ask_confirm", lambda *a, **k: True)
+    versions._reset_instance_settings()
+
+    settings = app.config.instance("1.21.8", root=app.layout.root)
+    assert settings["max_memory_mb"] == app.config.max_memory_mb
+    assert settings["jvm_args"] == app.config.jvm_args
+    assert settings["process_priority"] == app.config.process_priority

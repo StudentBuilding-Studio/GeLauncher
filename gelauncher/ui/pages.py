@@ -377,8 +377,15 @@ class VersionsPage(Page):
             text_color=theme.MUTED,
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         ).pack(anchor="w", pady=(2, 0))
-        self.start_button = button(header, "▶ 启动游戏", self._start, accent=True, width=140, height=40)
-        self.start_button.grid(row=0, column=2, sticky="e")
+        actions = ctk.CTkFrame(header, fg_color="transparent")
+        actions.grid(row=0, column=2, sticky="e")
+        button(actions, "重置为默认", self._reset_instance_settings, width=110).pack(
+            side="left", padx=(0, 8)
+        )
+        self.start_button = button(
+            actions, "▶ 启动游戏", self._start, accent=True, width=140, height=40
+        )
+        self.start_button.pack(side="left")
 
         body = ctk.CTkFrame(self.detail_frame, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew")
@@ -703,6 +710,33 @@ class VersionsPage(Page):
                 fg_color=theme.ACCENT if active else "transparent",
                 text_color="#ffffff" if active else theme.TEXT,
             )
+
+    def _reset_instance_settings(self) -> None:
+        version_id = self.current
+        if not version_id:
+            return
+        from gelauncher.ui.confirm import ask_confirm
+
+        if not ask_confirm(
+            self,
+            title="重置实例设置",
+            message=(
+                f"把「{version_id}」的所有设置恢复成「设置」里的默认值？\n\n"
+                "会重置：内存、Java、窗口尺寸、日志窗口、JVM 参数、进程优先级。"
+            ),
+            confirm_text="重置",
+        ):
+            return
+        if self._save_job is not None:
+            try:
+                self.after_cancel(self._save_job)
+            except tk.TclError:
+                pass
+            self._save_job = None
+        self.app.config.forget_instance(version_id, root=self.app.layout.root)
+        self.app.config.save()
+        self.open(version_id)
+        self.app.set_status(f"{version_id} 的设置已重置为默认值")
 
     def _step_memory(self, delta: int) -> None:
         try:
@@ -1449,12 +1483,23 @@ class SettingsPage(Page):
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
         self.env_label.pack(fill="x", padx=14, pady=(6, 2))
+        self.env_java_list_label = ctk.CTkLabel(
+            env_card.body,
+            textvariable=self.java_list_var,
+            anchor="w",
+            justify="left",
+            text_color=theme.MUTED,
+            wraplength=760,
+            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+        )
+        self.env_java_list_label.pack(fill="x", padx=14, pady=(2, 2))
 
         def _refit_env(event) -> None:
             from gelauncher.ui import theme as theme_mod
 
             wrap = max(int(event.width / theme_mod.scale_factor()) - 24, 260)
             self.env_label.configure(wraplength=wrap)
+            self.env_java_list_label.configure(wraplength=wrap)
 
         env_card.body.bind("<Configure>", _refit_env, add="+")
 
