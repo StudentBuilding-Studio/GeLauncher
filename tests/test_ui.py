@@ -421,7 +421,7 @@ def test_delete_version_removes_directory_and_returns_to_list(app, monkeypatch):
     assert target.is_dir()
 
     app.delete_version("1.21.8")
-    _pump(app.root, 1.0)
+    _pump(app.root, 5.0)
 
     assert not target.exists()
     assert versions.current is None
