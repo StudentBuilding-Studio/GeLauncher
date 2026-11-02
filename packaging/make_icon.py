@@ -26,7 +26,14 @@ SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 def main() -> None:
     image = Image.open(SOURCE).convert("RGBA")
-    frames = {size: image.resize((size, size), Image.NEAREST) for size in SIZES}
+    # 小尺寸（16/24）细节本来就保不住，用面积平均保证"看得出形状"；
+    # 32 以上用最近邻保持像素硬边。全用 NEAREST 的话 16px 会糊成一团噪点。
+    frames = {
+        size: image.resize(
+            (size, size), Image.LANCZOS if size < 32 else Image.NEAREST
+        )
+        for size in SIZES
+    }
 
     # ico 里放满所有尺寸，Windows 会挑最接近的，不再二次平滑缩放
     frames[256].save(

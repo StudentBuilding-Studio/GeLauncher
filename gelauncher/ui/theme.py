@@ -65,50 +65,24 @@ def _icon_path() -> str | None:
     return None
 
 
-def _icon_pngs() -> list[str]:
-    """窗口图标用 PNG：iconbitmap 只会拿很小的那帧，标题栏会糊。"""
-    import sys
-    from pathlib import Path
-
-    bases = []
-    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
-        bases.append(Path(sys._MEIPASS))
-    bases.append(Path(__file__).resolve().parents[2] / "packaging")
-    sizes = (16, 24, 32, 48, 64, 128, 256)
-    for base in bases:
-        found = [
-            str(base / f"GeLauncher-{size}.png")
-            for size in sizes
-            if (base / f"GeLauncher-{size}.png").is_file()
-        ]
-        if found:
-            return found
-    return []
-
-
 def apply_window_icon(root) -> None:
-    pngs = _icon_pngs()
-    if pngs:
-        try:
-            import tkinter as tk
+    """设置窗口图标。
 
-            images = [tk.PhotoImage(file=path) for path in pngs]
-            root.iconphoto(True, *images)
-            root._gelauncher_icons = images  # 防止被 GC 掉后图标消失
-            # CustomTkinter 在 after(200) 时会检查这个标志；
-            # 不置位的话它会用自带的占位图标覆盖我们刚设置的窗口图标
-            try:
-                root._iconbitmap_method_called = True
-            except Exception:  # noqa: BLE001
-                pass
-            return
-        except Exception:  # noqa: BLE001 - 退回 ico
-            pass
+    注意：Windows 上 tk 的 iconphoto 对带 alpha 的 PNG 处理很差
+    （透明区域会变成白色噪点），所以这里用 ico + iconbitmap；
+    ico 里已经包含 16~256 全套尺寸，系统会按 DPI 取合适的那帧。
+    """
     path = _icon_path()
     if path is None:
         return
     try:
         root.iconbitmap(default=path)
+        # CustomTkinter 在 after(200) 时会检查这个标志，
+        # 不置位的话它会用自带图标覆盖掉我们的
+        try:
+            root._iconbitmap_method_called = True
+        except Exception:  # noqa: BLE001
+            pass
     except Exception:  # noqa: BLE001 - 非 Windows/缺 ico 时忽略
         pass
 
