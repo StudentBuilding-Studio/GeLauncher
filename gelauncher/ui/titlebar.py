@@ -133,31 +133,41 @@ class TitleBar(ctk.CTkFrame):
     # ------------------------------------------------------------------ 拖动
 
     def _start_drag(self, event) -> None:
-        """优先用 Windows 原生移动循环：自己 geometry 拖动会出现残影。"""
+        root = self.winfo_toplevel()
+        self._drag_offset = (event.x_root, event.y_root, root.winfo_x(), root.winfo_y())
+        self.bind("<B1-Motion>", self._on_drag, add="+")
+        self.bind("<ButtonRelease-1>", self._end_drag, add="+")
+
+    def _on_drag(self, event) -> None:
+        if self._drag_offset is None:
+            return
+        x0, y0, wx, wy = self._drag_offset
+        x = wx + event.x_root - x0
+        y = wy + event.y_root - y0
         root = self.winfo_toplevel()
         if sys.platform == "win32":
             try:
                 import ctypes
 
                 hwnd = int(root.wm_frame(), 16)
-                user32 = ctypes.windll.user32
-                user32.ReleaseCapture()
-                # WM_NCLBUTTONDOWN + HTCAPTION：交给系统拖，平滑且自带吸附
-                user32.SendMessageW(hwnd, 0x00A1, 2, 0)
+                # 直接移动窗口，不触发 Tk 的重新布局，避免拖动时残影
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, 0, x, y, 0, 0, 0x0001 | 0x0004 | 0x0010
+                )
                 return
             except Exception:  # noqa: BLE001
                 pass
-        # 非 Windows 兜底：记录偏移，用 <B1-Motion> 移动
-        self._drag_offset = (event.x_root, event.y_root, root.winfo_x(), root.winfo_y())
-        self.bind("<B1-Motion>", self._on_drag, add="+")
+        root.geometry(f"+{x}+{y}")
 
-    def _on_drag(self, event) -> None:
+    def _end_drag(self, _event) -> None:
         if self._drag_offset is None:
             return
-        x0, y0, wx, wy = self._drag_offset
-        self.winfo_toplevel().geometry(
-            f"+{wx + event.x_root - x0}+{wy + event.y_root - y0}"
-        )
+        self._drag_offset = None
+        # 拖动期间绕过 Tk 移动窗口，松手后同步一次位置，避免后续 geometry 跳回
+        try:
+            self.winfo_toplevel().update_idletasks()
+        except tk.TclError:
+            pass
 
     # ------------------------------------------------------------------ 按钮
 
