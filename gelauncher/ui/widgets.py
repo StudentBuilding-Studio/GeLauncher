@@ -150,7 +150,7 @@ def settings_row(parent, title: str, subtitle: str = "", control_factory=None, *
 
 
 class Dialog(ctk.CTkToplevel):
-    """所有对话框的基类：自动使用启动器图标，而不是 CTk 的占位图标。"""
+    """所有对话框的基类：启动器图标 + 相对主窗口居中。"""
 
     def __init__(self, master=None, **kwargs) -> None:
         super().__init__(master, **kwargs)
@@ -159,4 +159,27 @@ class Dialog(ctk.CTkToplevel):
 
             theme.apply_window_icon(self)
         except Exception:  # noqa: BLE001 - 图标只是装饰
+            pass
+        # 等 pack/grid 排完再居中；只改位置，不改尺寸
+        self.after(20, self.center_on_parent)
+
+    def center_on_parent(self) -> None:
+        try:
+            self.update_idletasks()
+            width = self.winfo_width() or self.winfo_reqwidth()
+            height = self.winfo_height() or self.winfo_reqheight()
+            parent = self.master
+            root = parent.winfo_toplevel() if hasattr(parent, "winfo_toplevel") else parent
+            px, py = root.winfo_rootx(), root.winfo_rooty()
+            pw, ph = root.winfo_width(), root.winfo_height()
+            if pw <= 1 or ph <= 1:
+                px, py = 0, 0
+                pw, ph = self.winfo_screenwidth(), self.winfo_screenheight()
+            x = px + max((pw - width) // 2, 0)
+            y = py + max((ph - height) // 2, 0)
+            # 物理像素定位，绕过 CTk geometry 的缩放
+            import tkinter as tk
+
+            tk.Toplevel.geometry(self, f"+{x}+{y}")
+        except Exception:  # noqa: BLE001 - 居中失败不影响功能
             pass
