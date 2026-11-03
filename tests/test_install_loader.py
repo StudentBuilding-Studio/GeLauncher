@@ -201,3 +201,37 @@ def test_merge_dedupes_same_coordinate_different_version():
     assert "org.ow2.asm:asm:9.10.1" in names
     # classifier 不同的要留住
     assert "org.lwjgl:lwjgl:3.3.3:natives-windows" in names
+
+def test_run_installer_aborts_when_silent(monkeypatch, tmp_path):
+    """installer 长时间没有输出要快速失败，而不是干等 15 分钟。"""
+    import io
+
+    from gelauncher.core import install_loader
+    from gelauncher.core.install_loader import LoaderInstallError, run_installer
+    from gelauncher.core.java import JavaRuntime
+
+    class FakeProcess:
+        def __init__(self):
+            self.stdout = io.StringIO("")
+            self.killed = False
+            self.returncode = None
+
+        def poll(self):
+            return -9 if self.killed else None
+
+        def kill(self):
+            self.killed = True
+
+        def wait(self, timeout=None):
+            return -9
+
+    monkeypatch.setattr(install_loader.subprocess, "Popen", lambda *a, **k: FakeProcess())
+    monkeypatch.setattr(install_loader, "INSTALLER_IDLE_TIMEOUT", 0.2)
+    java = JavaRuntime(path=tmp_path / "java.exe", version="17")
+
+    try:
+        run_installer(java, tmp_path / "installer.jar", [], cwd=tmp_path)
+    except LoaderInstallError as exc:
+        assert "没有任何输出" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("installer 卡死时应当抛错")

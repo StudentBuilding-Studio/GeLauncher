@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 import threading
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -35,7 +36,9 @@ FORGE_MAVEN = "https://maven.minecraftforge.net"
 FORGE_PROMOTIONS = "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
 BMCLAPI_MAVEN = "https://bmclapi2.bangbang93.com/maven/"
 
-INSTALLER_TIMEOUT = 15 * 60
+INSTALLER_TIMEOUT = 6 * 60
+#: installer 多久没有任何输出就判定卡死（卡在下载时通常一行都不再打印）
+INSTALLER_IDLE_TIMEOUT = 90
 
 ProgressHook = Callable[[str, str], None]
 
@@ -1154,10 +1157,13 @@ def run_installer(
 
     assert process.stdout is not None
 
+    last_output = [time.monotonic()]
+
     def pump() -> None:
         for line in process.stdout:  # type: ignore[union-attr]
             text = line.rstrip("\r\n")
             output.append(text)
+            last_output[0] = time.monotonic()
             if on_line is not None:
                 on_line(text)
 
@@ -1174,13 +1180,34 @@ def run_installer(
 
         watcher = threading.Thread(target=_watch, daemon=True)
         watcher.start()
-    try:
-        returncode = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        raise LoaderInstallError(
-            f"installer 超过 {timeout // 60} 分钟没结束，已终止。\n最后输出：\n{tail(output)}"
-        ) from None
+    # 除了总超时，还检测"长时间没有任何输出"：
+    # installer 连不上 files.minecraftforge.net 时会静默挂着，白等十几分钟
+    started = time.monotonic()
+    returncode = None
+    while True:
+        returncode = process.poll()
+        if returncode is not None:
+            break
+        now = time.monotonic()
+        if cancel is not None and cancel.is_set():
+            process.kill()
+            returncode = process.wait()
+            break
+        if now - last_output[0] > INSTALLER_IDLE_TIMEOUT:
+            process.kill()
+            raise LoaderInstallError(
+                f"installer 已经 {INSTALLER_IDLE_TIMEOUT} 秒没有任何输出，判定卡死并终止。\n"
+                "多半是连不上 files.minecraftforge.net。可以试试：\n"
+                "· 换一个更新的 Forge/NeoForge 版本\n"
+                "· 先在 HMCL 里装好这个加载器，再用 Ge 打开该实例\n"
+                f"最后输出：\n{tail(output)}"
+            )
+        if now - started > timeout:
+            process.kill()
+            raise LoaderInstallError(
+                f"installer 超过 {timeout // 60} 分钟没结束，已终止。\n最后输出：\n{tail(output)}"
+            )
+        time.sleep(0.2)
     thread.join(timeout=5)
     if cancel is not None:
         cancel.raise_if_cancelled()
