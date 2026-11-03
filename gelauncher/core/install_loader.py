@@ -954,6 +954,7 @@ def install_forge(
     if use_mirror:
         # Forge installer 的 --mirror 会把库下载指到镜像，避免直连 maven.minecraftforge.net
         args += ["--mirror", BMCLAPI_MAVEN]
+    ensure_launcher_profiles(layout)
     _notify(progress, "install", f"运行 Forge installer（Java {java.major}）…")
     output = run_installer(
         java,
@@ -1077,6 +1078,7 @@ def install_neoforge(
     if use_mirror:
         args += ["--mirror", BMCLAPI_MAVEN]
     before = set(layout.installed_versions())
+    ensure_launcher_profiles(layout)
     _notify(progress, "install", f"运行 NeoForge installer（Java {java.major}）…")
     output = run_installer(
         java,
@@ -1127,6 +1129,19 @@ def _download_installer(fetcher: Fetcher, urls: list[str], destination: Path, la
         raise LoaderInstallError(f"installer 下载失败：{report.failures}")
     return destination
 
+
+def ensure_launcher_profiles(layout: GameLayout) -> None:
+    """Forge installer 需要一个 launcher_profiles.json，缺了会直接报错退出。"""
+    path = layout.root / "launcher_profiles.json"
+    if path.is_file():
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '{"profiles":{},"settings":{},"version":3}', encoding="utf-8"
+        )
+    except OSError:
+        pass
 
 def run_installer(
     java: JavaRuntime,
