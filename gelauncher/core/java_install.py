@@ -1,7 +1,7 @@
 """自动安装 Java：本机缺少某个版本需要的 Java 时，从 Adoptium 下 Temurin JDK。
 
 和 HMCL 的"自动下载 Java"一样：只下当前平台（windows/x64）的 JDK，
-解压到 ``<游戏目录>/launcher/java/temurin-<大版本>/``，再把 java.exe 加进候选列表。
+解压到 ``<启动器数据目录>/java/temurin-<大版本>/``，再把 java.exe 加进候选列表。（和 HMCL 一样放在启动器自己的目录，不污染游戏目录。）
 """
 
 from __future__ import annotations
@@ -52,17 +52,17 @@ def _safe_extract(archive: zipfile.ZipFile, target: Path, cancel=None) -> None:
 
 
 def install_java(
-    game_root: Path,
+    java_root: Path,
     major: int,
     *,
     fetcher: Fetcher,
     progress=None,
     cancel=None,
 ) -> JavaRuntime:
-    """下载 Temurin JDK ``major`` 并返回探测到的运行时。"""
+    """下载 Temurin JDK ``major`` 到 ``java_root`` 并返回探测到的运行时。"""
     from dataclasses import replace
 
-    java_root = Path(game_root) / "launcher" / "java"
+    java_root = Path(java_root)
     java_root.mkdir(parents=True, exist_ok=True)
     archive_path = java_root / f"temurin-{major}.zip"
     target = java_root / f"temurin-{major}"

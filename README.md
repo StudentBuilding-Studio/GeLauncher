@@ -26,7 +26,7 @@
 - CurseForge 文件默认走 `mod.mcimirror.top` 代理解析（不需要 API key）；
   想用官方 API 就设置环境变量 `GE_CURSE_API_KEY` 或配置 `curse_api_key`（不内置，避免泄露）
 - **Java**：按版本要求的 `javaVersion` 自动挑（≥ 要求里最小的那个）；本机缺 Java 时弹窗询问，
-  可直接从 Adoptium 下载安装 Temurin JDK 到 `<游戏目录>/launcher/java/`，并加入候选列表
+  可直接从 Adoptium 下载安装 Temurin JDK 到启动器数据目录（`%APPDATA%\GeLauncher\java\`，和 HMCL 一样不放进游戏目录），并加入候选列表
 - **账号**：离线账号（创建时校验只允许字母/数字/下划线）；微软账号见下方"账号"一节
 - **界面**：CustomTkinter 实现，版本 / 账号 / 设置三个一级页面；支持浅色 / 深色 / 跟随系统主题
 - **安装/导入可取消**：日志窗口带"取消"按钮，取消后杀掉 installer/processor 子进程并清理这次新建的残留

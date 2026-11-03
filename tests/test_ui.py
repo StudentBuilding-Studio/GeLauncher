@@ -857,18 +857,25 @@ def test_import_dialog_version_is_locked_until_edit(app, tmp_path):
     dialog.destroy()
 
 def test_scan_finds_launcher_local_java(app, tmp_path, monkeypatch):
-    """启动器自己下的 Java（<游戏目录>/launcher/java）也要被扫描到。"""
+    """启动器自己下的 Java 放在数据目录；旧版本装在游戏目录的要迁移过来。"""
     from types import SimpleNamespace
 
+    import gelauncher.config as config_module
     from gelauncher.core import java as java_core
     from gelauncher.core.layout import GameLayout
 
-    root = tmp_path / "mc"
-    exe = root / "launcher" / "java" / "temurin-8" / "jdk" / "bin" / "java.exe"
+    managed = tmp_path / "appdata-java"
+    exe = managed / "temurin-8" / "jdk" / "bin" / "java.exe"
     exe.parent.mkdir(parents=True)
     exe.write_bytes(b"fake")
 
+    root = tmp_path / "mc"
+    legacy_exe = root / "launcher" / "java" / "temurin-17" / "jdk" / "bin" / "java.exe"
+    legacy_exe.parent.mkdir(parents=True)
+    legacy_exe.write_bytes(b"fake")
+
     app.layout = GameLayout(root)
+    monkeypatch.setattr(config_module, "managed_java_dir", lambda: managed)
     monkeypatch.setattr(java_core, "installed_javas", lambda: [])
     monkeypatch.setattr(
         java_core,
@@ -878,3 +885,5 @@ def test_scan_finds_launcher_local_java(app, tmp_path, monkeypatch):
 
     pairs = app.scan_installed_javas()
     assert (8, str(exe)) in pairs
+    assert (managed / "temurin-17").is_dir()
+    assert not legacy_exe.exists()

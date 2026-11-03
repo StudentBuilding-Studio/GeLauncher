@@ -52,11 +52,11 @@ def test_install_java_extracts_zip(tmp_path, monkeypatch):
     monkeypatch.setattr(
         java_install, "probe_java", lambda path: _runtime(str(path), "17.0.9")
     )
-    runtime = java_install.install_java(tmp_path, 17, fetcher=FakeFetcher())
+    runtime = java_install.install_java(tmp_path / "java", 17, fetcher=FakeFetcher())
     assert runtime.major == 17
-    expected = tmp_path / "launcher" / "java" / "temurin-17" / "jdk-17.0.9+9" / "bin" / "java.exe"
+    expected = tmp_path / "java" / "temurin-17" / "jdk-17.0.9+9" / "bin" / "java.exe"
     assert expected.is_file()
-    assert not (tmp_path / "launcher" / "java" / "temurin-17.zip").exists()
+    assert not (tmp_path / "java" / "temurin-17.zip").exists()
 
 def test_java_major_compatible():
     assert java.java_major_compatible(8, 8)

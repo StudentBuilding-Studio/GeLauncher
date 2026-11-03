@@ -491,7 +491,9 @@ class LauncherApp:
         instance = f"Java {required}"
         token, window = self.begin_task(instance)
         window.start_session(f"安装 Temurin JDK {required}")
-        window.append(f"[LAUNCHER] 安装位置：{self.layout.root / 'launcher' / 'java'}")
+        from gelauncher.config import managed_java_dir
+
+        window.append(f"[LAUNCHER] 安装位置：{managed_java_dir()}")
         window.set_status(f"下载 Java {required}…")
         fetcher = self.make_fetcher()
 
@@ -503,7 +505,7 @@ class LauncherApp:
 
             try:
                 runtime = install_java(
-                    self.layout.root,
+                    managed_java_dir(),
                     required,
                     fetcher=fetcher,
                     progress=progress,
@@ -1062,14 +1064,57 @@ class LauncherApp:
         runtimes = installed_javas()
         pairs = [(item.major, str(item.path)) for item in runtimes]
 
-        # 启动器自己下载的 Java 在 <游戏目录>/launcher/java 下，不在系统注册表里，
-        # 不扫描的话会漏掉已经装好的 Java 8/17/21
-        local_root = self.layout.root / "launcher" / "java"
+        # 启动器自己下载的 Java 放在数据目录下（managed_java_dir），
+        # 旧版本曾错误地装在 <游戏目录>/launcher/java，这里顺便迁移过来
+        from gelauncher.config import managed_java_dir
+
+        local_root = managed_java_dir()
+        legacy_root = self.layout.root / "launcher" / "java"
+        try:
+            local_root.mkdir(parents=True, exist_ok=True)
+            moved = False
+            if legacy_root.is_dir():
+                for child in list(legacy_root.iterdir()):
+                    if not child.is_dir() or not child.name.startswith("temurin-"):
+                        continue
+                    target = local_root / child.name
+                    if target.exists():
+                        continue
+                    try:
+                        import shutil
+
+                        shutil.move(str(child), str(target))
+                        moved = True
+                    except OSError:
+                        pass  # Java 正在运行/被占用时下次再迁移
+
+            if moved:
+                # 配置里指向旧位置的路径改成新位置
+                retargeted = False
+                for index, value in enumerate(list(self.config.java_paths)):
+                    try:
+                        relative = Path(value).resolve().relative_to(
+                            legacy_root.resolve()
+                        )
+                    except (OSError, ValueError):
+                        continue
+                    new_path = local_root / relative
+                    if new_path.is_file():
+                        self.config.java_paths[index] = str(new_path)
+                        retargeted = True
+                if retargeted:
+                    self.config.save()
+        except OSError:
+            pass
+
         seen = {path.lower() for _major, path in pairs}
-        if local_root.is_dir():
-            for exe in sorted(local_root.glob("*/**/bin/java.exe")) + sorted(
-                local_root.glob("**/bin/java.exe")
-            ):
+        roots = [local_root]
+        if legacy_root.is_dir():
+            roots.append(legacy_root)
+        for root in roots:
+            if not root.is_dir():
+                continue
+            for exe in sorted(root.glob("**/bin/java.exe")):
                 if str(exe).lower() in seen:
                     continue
                 runtime = probe_java_cached(exe)

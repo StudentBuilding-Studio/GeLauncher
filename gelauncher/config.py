@@ -25,6 +25,11 @@ def config_dir() -> Path:
     return root / "GeLauncher"
 
 
+def managed_java_dir() -> Path:
+    """启动器自己下载的 Java（Temurin）统一放在配置目录下，而不是游戏目录。"""
+    return config_dir() / "java"
+
+
 def config_path() -> Path:
     return config_dir() / "config.json"
 
