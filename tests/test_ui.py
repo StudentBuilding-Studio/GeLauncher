@@ -906,3 +906,12 @@ def test_launch_failure_shows_dialog_without_log_window(app, tmp_path, monkeypat
 
     app._show_launch_failure("1.21.8", "", str(log), crashed=True, code=1)
     assert calls[-1] == "游戏异常退出"
+
+def test_single_instance_second_acquire_fails():
+    import os
+
+    from gelauncher.ui.single_instance import acquire
+
+    name = f"GeLauncher-Test-{os.getpid()}"
+    assert acquire(name)
+    assert not acquire(name)

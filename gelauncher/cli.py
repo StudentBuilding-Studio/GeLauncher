@@ -26,7 +26,7 @@ from .core.install_loader import (
 )
 from .core.install_vanilla import InstallError, install_version, missing_report, remote_versions
 from .core.java import JavaError, find_java, installed_javas
-from .core.launch import LaunchError, LaunchOptions, prepare, run
+from .core.launch import LaunchError, LaunchOptions, prepare, redact_command, run
 from .core.layout import GameLayout, current_env
 from .core.models import VersionJsonError
 from .core.net import Fetcher
@@ -117,6 +117,24 @@ def config_path_hint() -> str:
     return str(config_path())
 
 
+def _resolve_java(layout: GameLayout, version_id: str, explicit, config: Config):
+    """CLI 自动选 Java 时也参考 config 里扫描/安装过的候选。"""
+    if explicit:
+        return Path(explicit)
+    from .core.java import choose_java
+
+    try:
+        required = layout.load_json(version_id).java_version
+    except Exception:  # noqa: BLE001 - 读不到就交给 find_java
+        required = None
+    runtime, _satisfied = choose_java(
+        required, config.java_choices(), preferred=config.java_path
+    )
+    if runtime is not None:
+        return runtime.path
+    return Path(config.java_path) if config.java_path else None
+
+
 def cmd_launch(args: argparse.Namespace, config: Config) -> int:
     layout = _make_layout(args, config)
     try:
@@ -128,7 +146,7 @@ def cmd_launch(args: argparse.Namespace, config: Config) -> int:
         layout=layout,
         version_id=args.version,
         account=account,
-        java_path=args.java or (Path(config.java_path) if config.java_path else None),
+        java_path=_resolve_java(layout, args.version, args.java, config),
         max_memory_mb=args.max_memory or config.max_memory_mb,
         width=args.width or config.width,
         height=args.height or config.height,
@@ -230,7 +248,7 @@ def cmd_verify(args: argparse.Namespace, config: Config) -> int:
         layout=layout,
         version_id=args.version,
         account=account,
-        java_path=args.java or (Path(config.java_path) if config.java_path else None),
+        java_path=_resolve_java(layout, args.version, args.java, config),
         max_memory_mb=args.max_memory or config.max_memory_mb,
         extra_jvm_args=tuple(args.jvm_arg or ()),
         extra_game_args=tuple(args.game_arg or ()),
@@ -243,7 +261,7 @@ def cmd_verify(args: argparse.Namespace, config: Config) -> int:
         return 1
     for warning in plan.warnings:
         print(f"[警告] {warning}", file=sys.stderr)
-    print(f"命令：{plan.printable_command()[:400]}{'…' if len(plan.printable_command()) > 400 else ''}")
+    print(f"命令：{redact_command(plan.printable_command())[:400]}{'…' if len(plan.printable_command()) > 400 else ''}")
 
     log_path = layout.root / "logs" / f"gelauncher-verify-{_stamp()}.log"
     print(f"启动器日志：{log_path}")

@@ -327,7 +327,12 @@ class LauncherApp:
         window = LogWindow(
             self.root,
             version_id,
-            log_path=self.layout.root / "logs" / f"gelauncher-{version_id}.log",
+            # 游戏日志由 launch.run 的轮转写入器负责；任务窗口没有 run，才自己落盘
+            log_path=(
+                self.layout.root / "logs" / f"gelauncher-{version_id}.log"
+                if task
+                else None
+            ),
             task=task,
             on_cancel=on_cancel,
         )
@@ -1353,8 +1358,12 @@ class LauncherApp:
 def run_ui(config: Config | None = None) -> int:
     from gelauncher.ui import theme
     from gelauncher.ui.dpi import enable_dpi_awareness
+    from gelauncher.ui.single_instance import acquire, notify_already_running
 
     enable_dpi_awareness()
+    if not acquire():
+        notify_already_running()
+        return 1
     config = config or Config.load()
     theme.set_initial(config.appearance)
     root = theme.make_root()

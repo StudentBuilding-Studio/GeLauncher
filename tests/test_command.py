@@ -164,3 +164,14 @@ def test_redact_command_hides_access_token():
     text = redact_command("java --accessToken abc.def --gameDir x")
     assert "abc.def" not in text
     assert "--accessToken ***" in text
+
+def test_rotating_sink_rotates(tmp_path):
+    from gelauncher.core.launch import _RotatingSink
+
+    sink = _RotatingSink(tmp_path / "game.log")
+    sink.LIMIT = 10
+    sink.write("x" * 20)
+    sink.flush()
+    assert (tmp_path / "game.log.1").is_file()
+    sink.write("y")
+    sink.close()

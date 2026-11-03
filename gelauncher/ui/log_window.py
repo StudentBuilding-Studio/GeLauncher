@@ -141,8 +141,10 @@ class LogWindow(Dialog):
         self.text.configure(state="disabled")
         self._write_file(line)
 
+    LOG_LIMIT = 20 * 1024 * 1024
+
     def _write_file(self, line: str) -> None:
-        """日志窗口的内容也落盘，出问题时能翻记录。"""
+        """日志窗口的内容也落盘；超过 20MB 自动轮转成 .1。"""
         if self.log_path is None:
             return
         try:
@@ -151,6 +153,15 @@ class LogWindow(Dialog):
                 self._handle = self.log_path.open("a", encoding="utf-8")
             self._handle.write(line + "\n")
             self._handle.flush()
+            if self._handle.tell() > self.LOG_LIMIT:
+                self._handle.close()
+                backup = self.log_path.with_name(self.log_path.name + ".1")
+                try:
+                    backup.unlink(missing_ok=True)
+                    self.log_path.replace(backup)
+                except OSError:
+                    pass
+                self._handle = self.log_path.open("w", encoding="utf-8")
         except OSError:
             self._handle = None
 

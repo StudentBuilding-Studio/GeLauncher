@@ -365,8 +365,51 @@ class LaunchResult:
     log_path: Path | None = None
 
 
-def _pump(stream: TextIO, sink: TextIO | None, on_line: Callable[[str], None] | None) -> None:
-    formatter = GameOutputFormatter()
+class _RotatingSink:
+    """按 20MB 轮转的日志文件写入器（长时间跑游戏不会把磁盘写满）。"""
+
+    LIMIT = 20 * 1024 * 1024
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self.path.open("w", encoding="utf-8", errors="replace")
+
+    def write(self, text: str) -> None:
+        try:
+            self._handle.write(text)
+            if self._handle.tell() > self.LIMIT:
+                self._rotate()
+        except OSError:
+            pass
+
+    def flush(self) -> None:
+        try:
+            self._handle.flush()
+        except OSError:
+            pass
+
+    def close(self) -> None:
+        try:
+            self._handle.close()
+        except OSError:
+            pass
+
+    def _rotate(self) -> None:
+        try:
+            self._handle.close()
+            backup = self.path.with_name(self.path.name + ".1")
+            try:
+                backup.unlink(missing_ok=True)
+                self.path.replace(backup)
+            except OSError:
+                pass
+            self._handle = self.path.open("w", encoding="utf-8", errors="replace")
+        except OSError:
+            pass
+
+
+def _pump(stream: TextIO, sink, on_line: Callable[[str], None] | None) -> None:
 
     def emit(text: str) -> None:
         if on_line is not None:
@@ -394,10 +437,9 @@ def run(
     wait: bool = True,
 ) -> LaunchResult | subprocess.Popen:
     """启动游戏。``wait=True`` 时等到退出并返回退出码。"""
-    sink: TextIO | None = None
+    sink: _RotatingSink | None = None
     if log_path is not None:
-        Path(log_path).parent.mkdir(parents=True, exist_ok=True)
-        sink = Path(log_path).open("w", encoding="utf-8", errors="replace")
+        sink = _RotatingSink(Path(log_path))
 
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
     try:
