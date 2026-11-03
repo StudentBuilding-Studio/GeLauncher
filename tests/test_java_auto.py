@@ -57,3 +57,11 @@ def test_install_java_extracts_zip(tmp_path, monkeypatch):
     expected = tmp_path / "launcher" / "java" / "temurin-17" / "jdk-17.0.9+9" / "bin" / "java.exe"
     assert expected.is_file()
     assert not (tmp_path / "launcher" / "java" / "temurin-17.zip").exists()
+
+def test_java_major_compatible():
+    assert java.java_major_compatible(8, 8)
+    assert not java.java_major_compatible(8, 17)
+    assert not java.java_major_compatible(8, 25)
+    assert java.java_major_compatible(17, 17)
+    assert java.java_major_compatible(17, 21)
+    assert java.java_major_compatible(None, 25)

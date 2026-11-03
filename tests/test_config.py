@@ -121,3 +121,14 @@ def test_instance_falls_back_to_global_defaults(tmp_path):
     assert settings["height"] == 720
     assert settings["jvm_args"] == "-Xms1G"
     assert settings["process_priority"] == "above"
+
+def test_save_is_atomic(tmp_path):
+    import json
+
+    from gelauncher.config import Config
+
+    cfg = Config(game_dir=str(tmp_path / "mc"))
+    target = tmp_path / "config.json"
+    cfg.save(target)
+    assert json.loads(target.read_text(encoding="utf-8"))["game_dir"].endswith("mc")
+    assert not (tmp_path / "config.json.tmp").exists()

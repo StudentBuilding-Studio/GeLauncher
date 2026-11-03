@@ -21,7 +21,7 @@ import subprocess
 import tempfile
 import threading
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
@@ -79,6 +79,7 @@ class InstallProfile:
     processors: list[dict]
     libraries: list[dict]
     version_json: dict
+    install: dict = field(default_factory=dict)
 
 
 # --------------------------------------------------------------------------- #
@@ -205,20 +206,44 @@ def read_profile(installer: Path) -> InstallProfile:
             version_json = json.loads(raw.get("versionInfo") or "{}")
     if not version_json:
         raise ProcessorError("installer 里没有版本 JSON（既没有 json 也没有 versionInfo）")
+    install = raw.get("install") or {}
+    libraries = raw.get("libraries") or (install.get("libraries") if isinstance(install, dict) else None) or []
     return InstallProfile(
         minecraft=str(raw.get("minecraft") or ""),
         version=str(raw.get("version") or ""),
         json_entry=json_entry,
         data=raw.get("data") or {},
         processors=raw.get("processors") or [],
-        libraries=raw.get("libraries") or [],
+        libraries=libraries,
         version_json=version_json,
+        install=install if isinstance(install, dict) else {},
     )
 
 
 # --------------------------------------------------------------------------- #
 # 准备文件
 # --------------------------------------------------------------------------- #
+
+
+def _copy_legacy_root_jar(installer: Path, layout: GameLayout, install: dict) -> None:
+    """老 installer 的 forge universal jar 在压缩包根目录，按 install.filePath 放置。"""
+    file_path = str(install.get("filePath") or "").strip()
+    if not file_path:
+        return
+    target = layout.libraries_dir / Path(file_path)
+    if target.is_file():
+        return
+    wanted = Path(file_path).name
+    with zipfile.ZipFile(installer) as archive:
+        for entry in archive.namelist():
+            if entry.startswith("maven/") or entry.endswith("/"):
+                continue
+            if Path(entry).name != wanted:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with archive.open(entry) as source, target.open("wb") as sink:
+                shutil.copyfileobj(source, sink)
+            return
 
 
 def _copy_embedded_maven(installer: Path, layout: GameLayout) -> None:
@@ -371,7 +396,7 @@ def install_with_processors(
     installer: Path,
     *,
     fetcher: Fetcher,
-    java: Path,
+    java: Path | None = None,
     progress: ProgressHook | None = None,
     cancel=None,
 ) -> dict:
@@ -384,6 +409,7 @@ def install_with_processors(
             f"installer 是给 {profile.minecraft} 的，当前实例是 {mc_version}"
         )
     _copy_embedded_maven(installer, layout)
+    _copy_legacy_root_jar(installer, layout, profile.install)
     report = _download_profile_libraries(
         fetcher, layout, profile.libraries, progress=progress, cancel=cancel
     )
@@ -419,11 +445,15 @@ def install_with_processors(
                     chosen = value.get("client") or next(iter(value.values()), "")
                     vars[key] = _parse_literal(str(chosen), {}, layout, extract)
 
-        vanilla_jar = layout.version_jar_path(mc_version)
-        if not vanilla_jar.is_file():
-            raise ProcessorError(f"缺少原版客户端 jar：{vanilla_jar}")
-        isolated_jar = temp_dir / "minecraft.jar"
-        shutil.copy2(vanilla_jar, isolated_jar)
+        processors = profile.processors
+        if processors:
+            vanilla_jar = layout.version_jar_path(mc_version)
+            if not vanilla_jar.is_file():
+                raise ProcessorError(f"缺少原版客户端 jar：{vanilla_jar}")
+            isolated_jar = temp_dir / "minecraft.jar"
+            shutil.copy2(vanilla_jar, isolated_jar)
+        else:
+            isolated_jar = temp_dir / "minecraft.jar"
 
         vars.update(
             {
@@ -436,7 +466,8 @@ def install_with_processors(
             }
         )
 
-        processors = profile.processors
+        if processors and java is None:
+            raise ProcessorError("这个 installer 需要 Java 来运行 processors")
         for index, processor in enumerate(processors, start=1):
             if cancel is not None:
                 cancel.raise_if_cancelled()

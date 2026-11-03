@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,8 @@ def config_dir() -> Path:
 def config_path() -> Path:
     return config_dir() / "config.json"
 
+
+_SAVE_LOCK = threading.RLock()
 
 DEFAULT_INSTANCE = {
     "max_memory_mb": None,   # None = 用全局默认
@@ -233,10 +236,11 @@ class Config:
         cleaned = _clean_path(path)
         if not cleaned.strip():
             return False
-        if _norm(cleaned) in {_norm(p) for p in self.java_paths}:
-            return False
-        self.java_paths.append(cleaned)
-        return True
+        with _SAVE_LOCK:
+            if _norm(cleaned) in {_norm(p) for p in self.java_paths}:
+                return False
+            self.java_paths.append(cleaned)
+            return True
 
     def java_choices(self) -> list[str]:
         """下拉框的候选：已知路径 + 当前默认（如果不在列表里）。"""
@@ -246,10 +250,16 @@ class Config:
         return choices
 
     def save(self, path: Path | None = None) -> Path:
+        """原子写：先写 .tmp 再 replace，避免并发/崩溃把配置写成半个 JSON。"""
         path = path or config_path()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {key: value for key, value in asdict(self).items()}
-        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        with _SAVE_LOCK:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {key: value for key, value in asdict(self).items()}
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            os.replace(tmp, path)
         return path
 
     def game_dir_path(self) -> Path:

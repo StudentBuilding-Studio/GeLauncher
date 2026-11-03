@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import libraries
-from .java import JavaRuntime, find_java
+from .java import JavaError, JavaRuntime, find_java
 from .layout import GameLayout
 from .models import VersionJson, VersionJsonError
 from .forge_processors import ProcessorError
@@ -36,9 +36,9 @@ FORGE_MAVEN = "https://maven.minecraftforge.net"
 FORGE_PROMOTIONS = "https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json"
 BMCLAPI_MAVEN = "https://bmclapi2.bangbang93.com/maven/"
 
-INSTALLER_TIMEOUT = 6 * 60
+INSTALLER_TIMEOUT = 10 * 60
 #: installer 多久没有任何输出就判定卡死（卡在下载时通常一行都不再打印）
-INSTALLER_IDLE_TIMEOUT = 90
+INSTALLER_IDLE_TIMEOUT = 180
 
 ProgressHook = Callable[[str, str], None]
 
@@ -421,6 +421,9 @@ def _merge_loader_json(
 
     if patch.get("mainClass"):
         raw["mainClass"] = patch["mainClass"]
+    if patch.get("minecraftArguments"):
+        # 1.12.2 及更早用 minecraftArguments（里面带 --tweakClass），必须一起合并
+        raw["minecraftArguments"] = patch["minecraftArguments"]
     if patch.get("jar"):
         raw["jar"] = patch["jar"]
 
@@ -860,16 +863,20 @@ def _attach_via_processors(
     cancel=None,
 ) -> None:
     """跑 processors，把产出的版本 JSON 合并进实例，并下载加载器库。"""
-    from .forge_processors import ProcessorError, install_with_processors
+    from .forge_processors import ProcessorError, install_with_processors, read_profile
 
-    runtime = java or find_java(None)
+    profile = read_profile(installer_path)
+    java_path = None
+    if profile.processors:
+        runtime = java or find_java(None)
+        java_path = runtime.path
     patch = install_with_processors(
         layout,
         instance,
         actual,
         installer_path,
         fetcher=fetcher,
-        java=runtime.path,
+        java=java_path,
         progress=progress,
         cancel=cancel,
     )
@@ -881,13 +888,30 @@ def _attach_via_processors(
     report = fetcher.download_all(
         jobs, should_stop=(cancel.cancelled if cancel else None)
     )
+    # 实例自带的库（例如 OptiFine）可能不在标准 Maven，失败可以容忍；
+    # 但加载器自己的库（patch 里的 libraries）缺了就是坏安装，必须报错。
+    from .forge_processors import artifact_relative_path
+
+    critical: list[str] = []
+    for entry in patch.get("libraries") or []:
+        path = ((entry.get("downloads") or {}).get("artifact") or {}).get("path")
+        if not path:
+            try:
+                path = artifact_relative_path(str(entry.get("name") or ""))
+            except Exception:  # noqa: BLE001
+                path = ""
+        if path:
+            critical.append(path)
+    missing = [item for item in critical if not (layout.libraries_dir / item).is_file()]
+    if missing:
+        raise LoaderInstallError(
+            "加载器库缺失：\n  " + "\n  ".join(missing[:8])
+        )
     if not report.ok:
-        # 实例里可能带着 OptiFine 之类不在标准 Maven 的库，不能因为个别失败就整个安装失败；
-        # 加载时 prepare 会再检查真正缺的库。
         _notify(
             progress,
             "libraries",
-            f"[警告] {len(report.failures)} 个库没下载成功（启动时会再检查）："
+            f"[警告] {len(report.failures)} 个实例自带的库没下载成功（启动时会再检查）："
             + "、".join(name for name, _reason in report.failures[:5]),
         )
 
@@ -962,7 +986,7 @@ def install_forge(
                 progress=progress,
                 cancel=cancel,
             )
-        except (ProcessorError, LoaderInstallError) as exc:
+        except (ProcessorError, LoaderInstallError, JavaError) as exc:
             _notify(
                 progress,
                 "processors",
@@ -978,6 +1002,42 @@ def install_forge(
                 version_id=instance, loader="forge", installer_path=installer_path
             )
 
+    try:
+        return _install_forge_via_cli(
+            layout,
+            instance,
+            actual,
+            installer_path,
+            coordinate,
+            attach=attach,
+            use_mirror=use_mirror,
+            java=java,
+            fetcher=fetcher,
+            progress=progress,
+            cancel=cancel,
+            created_shim=created_shim,
+        )
+    except Exception:
+        if created_shim:
+            _drop_vanilla_shim(layout, actual)
+        raise
+
+def _install_forge_via_cli(
+    layout: GameLayout,
+    instance: str,
+    actual: str,
+    installer_path: Path,
+    coordinate: str,
+    *,
+    attach: bool,
+    use_mirror: bool,
+    java: JavaRuntime | None,
+    fetcher: Fetcher,
+    progress: ProgressHook | None,
+    cancel,
+    created_shim: bool,
+) -> LoaderReport:
+    """兜底：调用官方 installer 命令行（老 installer 或 profile 解析失败时）。"""
     seeded, failures = seed_install_profile_libraries(
         fetcher, layout, installer_path, progress=progress
     )
@@ -991,7 +1051,10 @@ def install_forge(
     else:
         _notify(progress, "seed", f"{seeded} 个库已就位")
 
-    java = java or find_java(None)
+    try:
+        java = java or find_java(None)
+    except JavaError as exc:
+        raise LoaderInstallError(f"安装加载器需要 Java：{exc}") from exc
     args = ["--installClient", str(layout.root)]
     if use_mirror:
         # Forge installer 的 --mirror 会把库下载指到镜像，避免直连 maven.minecraftforge.net
@@ -1256,7 +1319,7 @@ def run_installer(
                 f"installer 已经 {INSTALLER_IDLE_TIMEOUT} 秒没有任何输出，判定卡死并终止。\n"
                 "多半是连不上 files.minecraftforge.net。可以试试：\n"
                 "· 换一个更新的 Forge/NeoForge 版本\n"
-                "· 先在 HMCL 里装好这个加载器，再用 Ge 打开该实例\n"
+                "· 检查网络是否能访问 files.minecraftforge.net，或稍后重试\n"
                 f"最后输出：\n{tail(output)}"
             )
         if now - started > timeout:
@@ -1273,9 +1336,8 @@ def run_installer(
         joined = "\n".join(output)
         if "installClient is not a recognized option" in joined:
             raise LoaderInstallError(
-                "这个版本的 installer 不支持命令行安装客户端（老的 Forge/NeoForge，"
-                "只有 --installServer）。用 HMCL 装一次，再用 Ge 打开这个实例即可；"
-                "或者换一个更新的加载器版本。"
+                "这个版本的 installer 不支持命令行安装客户端（只有 --installServer）。"
+                "这个版本太老，建议换一个更新的加载器版本。"
             )
         raise LoaderInstallError(
             f"installer 退出码 {returncode}，安装失败。\n最后 50 行输出：\n{tail(output)}"

@@ -405,7 +405,11 @@ class LauncherApp:
 
     def ensure_java(self, version_id: str) -> bool:
         """检查版本要求的 Java；缺了就提示自动下载。返回 False 表示先别启动。"""
-        from gelauncher.core.java import choose_java, probe_java
+        from gelauncher.core.java import (
+            choose_java,
+            java_major_compatible,
+            probe_java,
+        )
         from gelauncher.core.models import VersionJsonError
 
         try:
@@ -420,13 +424,16 @@ class LauncherApp:
         manual = str(settings.get("java_path") or "").strip()
         if manual:
             runtime = probe_java(manual)
-            if runtime is not None and runtime.major >= required:
+            if runtime is not None and java_major_compatible(required, runtime.major):
                 return True
-            reason = (
-                f"手动指定的 Java {runtime.major} 低于要求的 Java {required}"
-                if runtime is not None
-                else f"手动指定的 Java 跑不起来：{manual}"
-            )
+            if runtime is None:
+                reason = f"手动指定的 Java 跑不起来：{manual}"
+            elif required <= 8 and runtime.major != 8:
+                reason = (
+                    f"手动指定的 Java {runtime.major} 太新，这个版本需要 Java 8"
+                )
+            else:
+                reason = f"手动指定的 Java {runtime.major} 低于要求的 Java {required}"
             if not messagebox.askyesno(
                 "Java 不符合要求",
                 f"{reason}。\n\n是否自动下载安装 Temurin JDK {required}？（约 190MB）",
@@ -436,10 +443,19 @@ class LauncherApp:
 
         # 每次启动前自动检测一次（缓存探测，很快），
         # 避免"装了 Java 但从没点过检测"导致误报缺 Java
+        self.set_status("正在检测本机 Java…")
+        try:
+            self.root.update_idletasks()
+        except tk.TclError:
+            pass
         self.scan_installed_javas()
         runtime, satisfied = choose_java(
             required, self.java_choices(), preferred=self.config.java_path
         )
+        if satisfied and runtime is not None and not java_major_compatible(
+            required, runtime.major
+        ):
+            satisfied = False
         if satisfied:
             return True
         found = []
@@ -448,6 +464,8 @@ class LauncherApp:
             if probed is not None:
                 found.append(f"Java {probed.major}")
         have = "、".join(sorted(set(found))) or "无"
+        if required <= 8:
+            have = f"{have}（这个版本需要 Java 8，更高版本不兼容）"
         if not messagebox.askyesno(
             "缺少 Java",
             f"「{version_id}」需要 Java {required}，本机检测到：{have}。\n\n"

@@ -835,3 +835,23 @@ def test_scan_installed_javas_adds_found_paths(app, monkeypatch):
 
     assert pairs == [(17, r"C:\Java\jdk17\bin\java.exe")]
     assert added == [r"C:\Java\jdk17\bin\java.exe"]
+
+def test_import_dialog_version_is_locked_until_edit(app, tmp_path):
+    from gelauncher.core.modpack import ModpackInfo
+    from gelauncher.ui.import_dialog import ModpackImportDialog
+
+    info = ModpackInfo(
+        name="测试包",
+        provider="Modrinth",
+        version="1.0",
+        game_version="1.20.1",
+        loader=None,
+        loader_version=None,
+        notes=[],
+    )
+    dialog = ModpackImportDialog(app.root, app, tmp_path / "x.mrpack", info, lambda *a: None)
+    assert dialog._version_entry.cget("state") == "disabled"
+    dialog._enable_version_edit()
+    assert dialog._version_entry.cget("state") == "normal"
+    assert dialog.version_var.get() == "1.20.1"
+    dialog.destroy()

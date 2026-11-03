@@ -187,6 +187,19 @@ def probe_java_cached(path: str | Path) -> "JavaRuntime | None":
     return runtime
 
 
+def java_major_compatible(required_major: int | None, actual_major: int) -> bool:
+    """这个 Java 大版本能不能跑要求 required_major 的游戏。
+
+    老版本（要求 8）只认 Java 8：Forge 1.12.2 之类用 Java 17/25 会直接崩，
+    不能因为"大版本 >= 8"就误判为可用。
+    """
+    if required_major is None:
+        return True
+    if required_major <= 8:
+        return actual_major == 8
+    return actual_major >= required_major
+
+
 def choose_java(
     required_major: int | None,
     paths,

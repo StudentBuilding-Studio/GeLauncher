@@ -49,9 +49,18 @@ class ModpackImportDialog(Dialog):
 
         label(body, "游戏版本").grid(row=2, column=0, sticky="w", pady=4)
         self.version_var = tk.StringVar(value=info.game_version or "未识别")
-        # 版本由整合包自动识别，只读展示，避免手改后装错版本
-        label(body, muted=True, textvariable=self.version_var).grid(
-            row=2, column=1, sticky="w", pady=4
+        # 默认只读（避免手改装错版本）；识别有误时可以点「修改」临时解锁
+        version_row = ctk.CTkFrame(body, fg_color="transparent")
+        version_row.grid(row=2, column=1, sticky="w", pady=4)
+        self._version_entry = ctk.CTkEntry(
+            version_row,
+            textvariable=self.version_var,
+            width=200,
+            state="disabled",
+        )
+        self._version_entry.pack(side="left")
+        button(version_row, "修改", self._enable_version_edit, width=56).pack(
+            side="left", padx=(6, 0)
         )
 
         label(body, "加载器").grid(row=3, column=0, sticky="w", pady=4)
@@ -86,6 +95,11 @@ class ModpackImportDialog(Dialog):
 
         self.protocol("WM_DELETE_WINDOW", self.destroy)
         self.after(120, self._focus_self)
+
+    def _enable_version_edit(self) -> None:
+        self._version_entry.configure(state="normal")
+        self._version_entry.focus_set()
+        self._version_entry.icursor("end")
 
     def _focus_self(self) -> None:
         try:

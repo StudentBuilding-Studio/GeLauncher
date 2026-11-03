@@ -193,7 +193,7 @@ def prepare(options: LaunchOptions) -> LaunchPlan:
     _check_files(
         classpath + native_jars,
         "库文件",
-        "这个版本没装完整，先用启动器的安装功能补全（或换 HMCL/PCL2 装一次）。",
+        "这个版本没装完整，先用启动器的「补全文件」功能修复。",
     )
 
     # ---- 游戏 jar ----

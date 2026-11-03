@@ -235,3 +235,94 @@ def test_run_installer_aborts_when_silent(monkeypatch, tmp_path):
         assert "没有任何输出" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("installer 卡死时应当抛错")
+
+def test_merge_loader_json_keeps_minecraft_arguments(tmp_path):
+    import json
+
+    from gelauncher.core.install_loader import _merge_loader_json
+    from gelauncher.core.layout import GameLayout
+
+    layout = GameLayout(tmp_path / "mc")
+    version_dir = layout.root / "versions" / "1.12.2"
+    version_dir.mkdir(parents=True)
+    layout.version_json_path("1.12.2").write_text(
+        json.dumps({"id": "1.12.2", "libraries": []}), encoding="utf-8"
+    )
+    patch = {
+        "mainClass": "net.minecraft.launchwrapper.Launch",
+        "minecraftArguments": "--tweakClass net.minecraftforge.fml.common.launcher.FMLTweaker",
+        "libraries": [],
+    }
+    raw = _merge_loader_json(layout, "1.12.2", patch, loader="forge")
+
+    assert raw["mainClass"] == "net.minecraft.launchwrapper.Launch"
+    assert "--tweakClass" in raw["minecraftArguments"]
+    assert raw["_geLoader"]["type"] == "forge"
+
+
+def test_legacy_installer_root_jar_is_copied(tmp_path):
+    import zipfile
+
+    from gelauncher.core.forge_processors import _copy_legacy_root_jar
+    from gelauncher.core.layout import GameLayout
+
+    layout = GameLayout(tmp_path / "mc")
+    installer = tmp_path / "forge-installer.jar"
+    with zipfile.ZipFile(installer, "w") as archive:
+        archive.writestr("forge-1.7.10-10.13.4.1614-universal.jar", b"fake universal")
+    file_path = "net/minecraftforge/forge/1.7.10-10.13.4.1614/forge-1.7.10-10.13.4.1614-universal.jar"
+
+    _copy_legacy_root_jar(installer, layout, {"filePath": file_path})
+
+    copied = layout.libraries_dir / file_path
+    assert copied.is_file()
+    assert copied.read_bytes() == b"fake universal"
+
+
+def test_missing_loader_library_fails_install(tmp_path, monkeypatch):
+    """实例自带的库失败可以忍，加载器自己的库缺了必须报错。"""
+    from gelauncher.core import install_loader
+    from gelauncher.core.install_loader import LoaderInstallError, _attach_via_processors
+    from gelauncher.core.layout import GameLayout
+    from gelauncher.core.net import DownloadReport
+
+    layout = GameLayout(tmp_path / "mc")
+    version_dir = layout.root / "versions" / "1.12.2"
+    version_dir.mkdir(parents=True)
+    layout.version_json_path("1.12.2").write_text('{"id": "1.12.2", "libraries": []}', encoding="utf-8")
+
+    patch = {
+        "mainClass": "net.minecraft.launchwrapper.Launch",
+        "minecraftArguments": "--tweakClass x",
+        "libraries": [
+            {"name": "net.minecraftforge:forge:1.12.2-14.23.5.2860"}
+        ],
+    }
+
+    class FakeProfile:
+        processors = []
+
+    monkeypatch.setattr(install_loader, "read_profile", lambda path: FakeProfile(), raising=False)
+    import gelauncher.core.forge_processors as fp
+
+    monkeypatch.setattr(fp, "read_profile", lambda path: FakeProfile())
+    monkeypatch.setattr(fp, "install_with_processors", lambda *a, **k: patch)
+
+    class FakeFetcher:
+        def download_all(self, jobs, should_stop=None):
+            return DownloadReport()
+
+    try:
+        _attach_via_processors(
+            layout,
+            "1.12.2",
+            "1.12.2",
+            tmp_path / "installer.jar",
+            loader="forge",
+            fetcher=FakeFetcher(),
+            java=None,
+        )
+    except LoaderInstallError as exc:
+        assert "加载器库缺失" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("加载器库缺失时应当失败")
