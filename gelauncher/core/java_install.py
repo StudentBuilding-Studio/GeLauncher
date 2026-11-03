@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import shutil
 import time
 import zipfile
@@ -28,9 +30,27 @@ def adoptium_url(major: int) -> str:
     )
 
 
+def adoptium_checksum(fetcher: Fetcher, major: int) -> str | None:
+    """从 Adoptium API 取该版本 zip 的 sha256（取不到就算了，不阻止安装）。"""
+    url = (
+        f"https://api.adoptium.net/v3/assets/latest/{major}/hotspot"
+        "?architecture=x64&image_type=jdk&os=windows&vendor=eclipse"
+    )
+    try:
+        raw = fetcher.get_bytes(url, label=f"Java {major} 校验值", ttl=600)
+        data = json.loads(raw.decode("utf-8"))
+        checksum = str(data[0]["binary"]["package"]["checksum"]).lower()
+    except Exception:  # noqa: BLE001 - API 不通就不校验
+        return None
+    return checksum if len(checksum) == 64 else None
+
+
 def _safe_extract(archive: zipfile.ZipFile, target: Path, cancel=None) -> None:
     root = target.resolve()
     members = [info for info in archive.infolist() if not info.is_dir()]
+    total = sum(info.file_size for info in members)
+    if len(members) > 200_000 or total > 8 * 1024 * 1024 * 1024:
+        raise JavaInstallError("Java 压缩包异常（文件过多或解压后过大），已拒绝解压")
     for index, info in enumerate(members, start=1):
         if cancel is not None and cancel.cancelled():
             from .cancel import Cancelled
@@ -72,6 +92,7 @@ def install_java(
         archive_path.unlink(missing_ok=True)
 
     if not archive_path.is_file():
+        expected_sha256 = adoptium_checksum(fetcher, major)
         if progress is not None:
             progress("java", f"下载 Temurin JDK {major}（约 190MB）…")
 
@@ -110,6 +131,13 @@ def install_java(
         )
         if not report.ok:
             raise JavaInstallError(f"Java 下载失败：{report.failures[:2]}")
+        if expected_sha256:
+            actual = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+            if actual != expected_sha256:
+                archive_path.unlink(missing_ok=True)
+                raise JavaInstallError(
+                    "Java 安装包 sha256 校验失败（可能下载被篡改/损坏），已删除，请重试。"
+                )
 
     if progress is not None:
         progress("java", "解压 Java…")

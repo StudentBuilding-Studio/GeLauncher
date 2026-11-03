@@ -133,3 +133,15 @@ def test_download_all_stops_when_cancelled(server):
     )
     with pytest.raises(Cancelled):
         fetcher.download_all([job], should_stop=lambda: True)
+
+def test_proxy_for_honors_env_and_no_proxy(monkeypatch):
+    from gelauncher.core import net
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7890")
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    proxy = net._proxy_for("https", "example.com")
+    assert proxy is not None and proxy[:2] == ("127.0.0.1", 7890)
+
+    monkeypatch.setenv("NO_PROXY", "example.com")
+    assert net._proxy_for("https", "example.com") is None
+    assert net._proxy_for("https", "localhost") is None

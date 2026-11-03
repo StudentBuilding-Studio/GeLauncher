@@ -65,3 +65,39 @@ def test_java_major_compatible():
     assert java.java_major_compatible(17, 17)
     assert java.java_major_compatible(17, 21)
     assert java.java_major_compatible(None, 25)
+
+def test_install_java_checks_sha256(tmp_path, monkeypatch):
+    import hashlib
+    import io
+    import json
+    import zipfile
+
+    from gelauncher.core import java_install
+
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("jdk/bin/java.exe", b"fake")
+    body = payload.getvalue()
+
+    class FakeFetcher:
+        def get_bytes(self, url, label="", ttl=0):
+            return json.dumps(
+                [{"binary": {"package": {"checksum": hashlib.sha256(b"other").hexdigest()}}}]
+            ).encode()
+
+        def download(self, job):
+            job.destination.write_bytes(body)
+            from gelauncher.core.net import DownloadReport
+
+            report = DownloadReport()
+            report.downloaded = 1
+            return report
+
+    monkeypatch.setattr(java_install, "probe_java", lambda path: None)
+    try:
+        java_install.install_java(tmp_path / "java", 17, fetcher=FakeFetcher())
+    except java_install.JavaInstallError as exc:
+        assert "sha256" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("校验失败时应当报错")
+    assert not (tmp_path / "java" / "temurin-17.zip").exists()

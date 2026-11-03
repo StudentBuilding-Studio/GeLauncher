@@ -667,10 +667,14 @@ def install_modpack(
 
     notify("overrides", "解压覆盖文件…")
     override_count = 0
+    total_bytes = 0
+    max_bytes = 20 * 1024 * 1024 * 1024
     with zipfile.ZipFile(archive_path) as archive:
         for name in archive.namelist():
             if name.endswith("/"):
                 continue
+            if override_count > 200_000:
+                raise ModpackError("整合包覆盖文件过多，已停止解压")
             matched = next((prefix for prefix in info.overrides if name.startswith(prefix)), None)
             if matched is None or name in info.skip:
                 continue
@@ -680,7 +684,14 @@ def install_modpack(
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(name) as source, target.open("wb") as sink:
-                sink.write(source.read())
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        raise ModpackError("整合包解压后超过 20GB，已停止解压")
+                    sink.write(chunk)
             override_count += 1
     notify("overrides", f"覆盖文件解压完成：{override_count} 个")
 

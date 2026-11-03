@@ -19,6 +19,7 @@ import os
 import shutil
 import socket
 import ssl
+import sys
 import threading
 import time
 import urllib.error
@@ -29,6 +30,9 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
 USER_AGENT = "gelauncher/0.1 (+https://example.invalid)"
+#: 单个文件下载硬上限，防止恶意镜像/损坏 manifest 写满磁盘
+MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024 * 1024
+
 CHUNK = 64 * 1024
 
 
@@ -237,10 +241,104 @@ def _drop_connection(connection: http.client.HTTPConnection) -> None:
         pass
 
 
+def _parse_proxy(value: str) -> tuple[str, int, str] | None:
+    value = (value or "").strip()
+    if not value:
+        return None
+    if "://" not in value:
+        value = "http://" + value
+    parts = urllib.parse.urlsplit(value)
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        return None
+    port = parts.port or (443 if parts.scheme.lower() == "https" else 80)
+    auth = ""
+    if parts.username:
+        import base64
+
+        token = f"{urllib.parse.unquote(parts.username)}:{urllib.parse.unquote(parts.password or '')}"
+        auth = "Basic " + base64.b64encode(token.encode()).decode()
+    return parts.hostname, port, auth
+
+
+def _no_proxy(host: str) -> bool:
+    host = (host or "").lower()
+    if host in ("localhost", "127.0.0.1", "::1"):
+        return True
+    raw = os.environ.get("NO_PROXY") or os.environ.get("no_proxy") or ""
+    for item in raw.split(","):
+        item = item.strip().lower().lstrip(".")
+        if not item:
+            continue
+        if item == "*":
+            return True
+        if host == item or host.endswith("." + item):
+            return True
+    return False
+
+
+def _proxy_settings() -> dict[str, tuple[str, int, str]]:
+    result: dict[str, tuple[str, int, str]] = {}
+    for key, scheme in (
+        ("HTTPS_PROXY", "https"),
+        ("https_proxy", "https"),
+        ("HTTP_PROXY", "http"),
+        ("http_proxy", "http"),
+        ("ALL_PROXY", "all"),
+        ("all_proxy", "all"),
+    ):
+        if scheme in result:
+            continue
+        parsed = _parse_proxy(os.environ.get(key, ""))
+        if parsed:
+            result[scheme] = parsed
+    if result:
+        return result
+    if sys.platform == "win32":
+        try:
+            import winreg
+
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Software\Microsoft\Windows\CurrentVersion\Internet Settings",
+            ) as key:
+                enabled = winreg.QueryValueEx(key, "ProxyEnable")[0]
+                if enabled:
+                    server = str(winreg.QueryValueEx(key, "ProxyServer")[0])
+                    for chunk in server.split(";"):
+                        if "=" in chunk:
+                            name, value = chunk.split("=", 1)
+                            parsed = _parse_proxy(value)
+                            if parsed:
+                                result[name.strip().lower()] = parsed
+                        else:
+                            parsed = _parse_proxy(chunk)
+                            if parsed:
+                                result["all"] = parsed
+        except OSError:
+            pass
+    return result
+
+
+def _proxy_for(scheme: str, host: str) -> tuple[str, int, str] | None:
+    if sys.platform != "win32" and not (
+        os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY") or os.environ.get("ALL_PROXY")
+    ):
+        return None
+    if _no_proxy(host):
+        return None
+    settings = _proxy_settings()
+    return settings.get(scheme) or settings.get("all")
+
+
 def _connection(
-    scheme: str, host: str, port: int, timeout: float, insecure: bool
+    scheme: str,
+    host: str,
+    port: int,
+    timeout: float,
+    insecure: bool,
+    proxy: tuple[str, int, str] | None = None,
 ) -> http.client.HTTPConnection:
-    key = (host, port, insecure)
+    key = (host, port, insecure, proxy)
     pool = _connections()
     connection = pool.get(key)
     if connection is not None and connection.sock is None:
@@ -248,7 +346,22 @@ def _connection(
         pool.pop(key, None)
         connection = None
     if connection is None:
-        if scheme == "https":
+        if proxy is not None:
+            proxy_host, proxy_port, auth = proxy
+            if scheme == "https":
+                connection = http.client.HTTPSConnection(
+                    proxy_host,
+                    proxy_port,
+                    timeout=timeout,
+                    context=_SSL_INSECURE if insecure else _SSL_SECURE,
+                )
+                headers = {"Proxy-Authorization": auth} if auth else None
+                connection.set_tunnel(host, port, headers=headers)
+            else:
+                connection = http.client.HTTPConnection(
+                    proxy_host, proxy_port, timeout=timeout
+                )
+        elif scheme == "https":
             connection = http.client.HTTPSConnection(
                 host, port, timeout=timeout, context=_SSL_INSECURE if insecure else _SSL_SECURE
             )
@@ -268,14 +381,20 @@ def _open(url: str, timeout: float, insecure: bool):
         scheme = parts.scheme.lower()
         host = parts.hostname or ""
         port = parts.port or (443 if scheme == "https" else 80)
-        connection = _connection(scheme, host, port, timeout, insecure)
+        proxy = _proxy_for(scheme, host)
+        connection = _connection(scheme, host, port, timeout, insecure, proxy)
         path = parts.path or "/"
         if parts.query:
             path += "?" + parts.query
+        headers = {"User-Agent": USER_AGENT, "Accept": "*/*"}
+        if proxy is not None:
+            if proxy[2]:
+                headers["Proxy-Authorization"] = proxy[2]
+            if scheme != "https":
+                # 普通 HTTP 代理要求请求行是绝对地址
+                path = f"http://{host}:{port}{path}"
         try:
-            connection.request(
-                "GET", path, headers={"User-Agent": USER_AGENT, "Accept": "*/*"}
-            )
+            connection.request("GET", path, headers=headers)
             response = connection.getresponse()
         except Exception:
             _drop_connection(connection)
@@ -742,6 +861,10 @@ class Fetcher:
             try:
                 with _open(url, self.timeout, insecure) as response:
                     total = job.size or int(response.headers.get("Content-Length") or 0)
+                    if total and total > MAX_DOWNLOAD_BYTES:
+                        raise DownloadError(
+                            f"文件过大（{total} 字节），超过下载上限：{job.describe()}"
+                        )
                     with part.open("wb") as sink:
                         while True:
                             if should_stop is not None and should_stop():
@@ -749,8 +872,12 @@ class Fetcher:
                             chunk = response.read(CHUNK)
                             if not chunk:
                                 break
-                            sink.write(chunk)
                             written += len(chunk)
+                            if written > MAX_DOWNLOAD_BYTES:
+                                raise DownloadError(
+                                    f"下载超过上限 {MAX_DOWNLOAD_BYTES // 1048576} MB：{job.describe()}"
+                                )
+                            sink.write(chunk)
                             if self.progress is not None:
                                 self.progress(written, total, job.describe())
                     return written
