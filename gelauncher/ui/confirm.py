@@ -143,6 +143,7 @@ def ask_confirm(
     title: str,
     message: str,
     confirm_text: str = "确定",
+    cancel_text: str = "取消",
 ) -> bool:
     """普通确认框（确认按钮是主色蓝，不是危险红）。"""
     dialog = DangerConfirmDialog(
@@ -150,6 +151,7 @@ def ask_confirm(
         title=title,
         message=message,
         confirm_text=confirm_text,
+        cancel_text=cancel_text,
         danger=False,
     )
     try:

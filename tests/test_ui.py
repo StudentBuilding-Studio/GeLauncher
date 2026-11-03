@@ -887,3 +887,21 @@ def test_scan_finds_launcher_local_java(app, tmp_path, monkeypatch):
     assert (8, str(exe)) in pairs
     assert (managed / "temurin-17").is_dir()
     assert not legacy_exe.exists()
+
+def test_launch_failure_shows_dialog_without_log_window(app, tmp_path, monkeypatch):
+    from gelauncher.ui import confirm
+
+    calls = []
+    monkeypatch.setattr(
+        confirm,
+        "ask_confirm",
+        lambda *a, **k: calls.append(k.get("title")) or False,
+    )
+    log = tmp_path / "run.log"
+    log.write_text("line1\nline2\n", encoding="utf-8")
+
+    app._show_launch_failure("1.21.8", "missing library", str(log), crashed=False)
+    assert calls == ["启动失败"]
+
+    app._show_launch_failure("1.21.8", "", str(log), crashed=True, code=1)
+    assert calls[-1] == "游戏异常退出"

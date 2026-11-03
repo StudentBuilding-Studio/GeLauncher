@@ -612,6 +612,10 @@ class LauncherApp:
                     self.messages.put(("log_status", key, "启动失败"))
                 self.messages.put(("status", f"启动 {version_id} 失败"))
                 self.messages.put(("error", f"启动失败：{exc}"))
+                if window is None:
+                    self.messages.put(
+                        ("launch_failed", version_id, str(exc), str(log_path))
+                    )
                 self.messages.put(("stopped", key))
                 return
 
@@ -621,6 +625,10 @@ class LauncherApp:
                 self.messages.put(("log", key, f"[LAUNCHER] 游戏退出，退出码 {code}"))
                 self.messages.put(("log_status", key, f"已退出（退出码 {code}）"))
                 self.messages.put(("status", f"{version_id} 已退出（退出码 {code}）"))
+                if code != 0:
+                    self.messages.put(
+                        ("launch_crashed", version_id, code, str(log_path))
+                    )
                 self.messages.put(("stopped", key))
 
             threading.Thread(target=waiter, daemon=True).start()
@@ -1216,6 +1224,55 @@ class LauncherApp:
                 pass
         self.root.destroy()
 
+    def _show_launch_failure(
+        self, version_id: str, detail: str, log_path: str, *, crashed: bool, code: int = 0
+    ) -> None:
+        """没开日志窗口时，启动失败/异常退出也要让用户看到，并能一键看日志。"""
+        from pathlib import Path
+
+        from gelauncher.ui.confirm import ask_confirm
+
+        if self.log_windows.get(self.instance_key(version_id)) is not None:
+            # 日志窗口本来就开着，错误已经能看到了，不再打断用户
+            return
+
+        tail = ""
+        try:
+            path = Path(log_path)
+            if path.is_file():
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+                tail = "\n".join(lines[-12:])
+        except OSError:
+            tail = ""
+
+        if crashed:
+            title = "游戏异常退出"
+            head = f"「{version_id}」启动后异常退出（退出码 {code}）。"
+        else:
+            title = "启动失败"
+            head = f"「{version_id}」启动失败：\n{detail}"
+        message = head
+        if tail:
+            message += f"\n\n最后日志：\n{tail}"
+        elif log_path:
+            message += f"\n\n日志文件：{log_path}"
+
+        if ask_confirm(
+            self.root,
+            title=title,
+            message=message,
+            confirm_text="查看日志",
+            cancel_text="关闭",
+        ):
+            self.open_log_window(version_id)
+            if tail:
+                try:
+                    self.log_line(version_id, "—— 日志文件最后 12 行 ——")
+                    for line in tail.splitlines():
+                        self.log_line(version_id, line)
+                except tk.TclError:
+                    pass
+
     def _poll(self) -> None:
         try:
             while True:
@@ -1284,6 +1341,14 @@ class LauncherApp:
                                 refresh()
                             except tk.TclError:
                                 pass
+                elif kind == "launch_failed":
+                    self._show_launch_failure(
+                        message[1], message[2], message[3], crashed=False
+                    )
+                elif kind == "launch_crashed":
+                    self._show_launch_failure(
+                        message[1], "", message[3], crashed=True, code=message[2]
+                    )
                 elif kind == "error":
                     self.set_status(message[1])
                 elif kind == "idle":
