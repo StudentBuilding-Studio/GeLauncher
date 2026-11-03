@@ -48,8 +48,9 @@ class ModpackImportDialog(Dialog):
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(2, 12))
 
         label(body, "游戏版本").grid(row=2, column=0, sticky="w", pady=4)
-        self.version_var = tk.StringVar(value=info.game_version or "")
-        ctk.CTkEntry(body, textvariable=self.version_var, width=220).grid(
+        self.version_var = tk.StringVar(value=info.game_version or "未识别")
+        # 版本由整合包自动识别，只读展示，避免手改后装错版本
+        label(body, muted=True, textvariable=self.version_var).grid(
             row=2, column=1, sticky="w", pady=4
         )
 
@@ -99,8 +100,12 @@ class ModpackImportDialog(Dialog):
         if not instance:
             messagebox.showwarning("实例名", "实例名不能为空", parent=self)
             return
-        if not version:
-            messagebox.showwarning("游戏版本", "请填游戏版本，例如 1.20.1", parent=self)
+        if not version or version == "未识别":
+            messagebox.showwarning(
+                "游戏版本",
+                "整合包里没有识别到游戏版本，无法导入。",
+                parent=self,
+            )
             return
         error = self.on_import(self.archive, self.info, instance, version)
         if error:

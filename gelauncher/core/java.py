@@ -134,7 +134,7 @@ def installed_javas() -> list[JavaRuntime]:
     """扫一遍本机，返回能用的 Java（去重、按大版本降序）。"""
     result: dict[str, JavaRuntime] = {}
     for path in _candidate_paths():
-        runtime = probe_java(path)
+        runtime = probe_java_cached(path)
         if runtime is None:
             continue
         key = str(runtime.path).lower()

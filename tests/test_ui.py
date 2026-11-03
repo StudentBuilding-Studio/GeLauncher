@@ -817,3 +817,21 @@ def test_titlebar_does_not_override_tkinter_root_helper(app):
     import tkinter as tk
 
     assert type(app.titlebar)._root is tk.Misc._root
+
+def test_scan_installed_javas_adds_found_paths(app, monkeypatch):
+    """启动前自动扫描：config 里没记录过的 Java 也要被加进候选。"""
+    from types import SimpleNamespace
+
+    from gelauncher.core import java as java_core
+
+    added = []
+    monkeypatch.setattr(
+        java_core,
+        "installed_javas",
+        lambda: [SimpleNamespace(major=17, path=Path(r"C:\Java\jdk17\bin\java.exe"))],
+    )
+    monkeypatch.setattr(app.config, "add_java_path", lambda path: added.append(path) or True)
+    pairs = app.scan_installed_javas()
+
+    assert pairs == [(17, r"C:\Java\jdk17\bin\java.exe")]
+    assert added == [r"C:\Java\jdk17\bin\java.exe"]

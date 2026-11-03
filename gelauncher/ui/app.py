@@ -174,13 +174,18 @@ class LauncherApp:
         layout = self.layout
 
         def work() -> None:
-            from gelauncher.core.java import probe_java_cached
+            from gelauncher.core.java import installed_javas, probe_java_cached
 
             for path in paths:
                 try:
                     probe_java_cached(path)
                 except Exception:  # noqa: BLE001
                     pass
+            try:
+                # 顺手扫一遍本机 Java，把探测缓存预热；点启动时的同步检测就能瞬间完成
+                installed_javas()
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 versions = list(layout.installed_versions())
             except OSError:
@@ -429,6 +434,9 @@ class LauncherApp:
                 return True
             return self._start_java_install(required)
 
+        # 每次启动前自动检测一次（缓存探测，很快），
+        # 避免"装了 Java 但从没点过检测"导致误报缺 Java
+        self.scan_installed_javas()
         runtime, satisfied = choose_java(
             required, self.java_choices(), preferred=self.config.java_path
         )
@@ -1001,6 +1009,25 @@ class LauncherApp:
     def add_java_path(self, path: str) -> None:
         if self.config.add_java_path(path):
             self.config.save()
+
+    def scan_installed_javas(self) -> list[tuple[int, str]]:
+        """同步扫一遍本机 Java（探测有缓存），结果并入下拉候选。
+
+        启动游戏前调用，保证"装过但没点检测"的 Java 也能被用上。
+        """
+        from gelauncher.core.java import installed_javas
+
+        runtimes = installed_javas()
+        pairs = [(item.major, str(item.path)) for item in runtimes]
+        changed = False
+        for _major, path in pairs:
+            if self.config.add_java_path(path):
+                changed = True
+        if changed:
+            self.config.save()
+        self.detected_javas = list(pairs)
+        self.messages.put(("java_choices", pairs))
+        return pairs
 
     def detect_java(self) -> None:
         """后台扫一遍本机 Java，把找到的路径全部塞进下拉框。"""
