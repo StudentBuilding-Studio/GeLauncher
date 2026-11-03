@@ -1499,17 +1499,48 @@ class SettingsPage(Page):
         env = self._setting_sections["env"]
         env_card = Card(env, "环境")
         env_card.pack(fill="x", padx=4, pady=(0, 10))
-        self.env_var = tk.StringVar(value="")
-        self.env_label = ctk.CTkLabel(
+
+        self.env_system_var = tk.StringVar(value="")
+        self._row(
             env_card.body,
-            textvariable=self.env_var,
-            anchor="w",
-            justify="left",
-            text_color=theme.MUTED,
-            wraplength=760,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            "系统",
+            "",
+            lambda row: ctk.CTkLabel(
+                row,
+                textvariable=self.env_system_var,
+                anchor="e",
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ),
         )
-        self.env_label.pack(fill="x", padx=14, pady=(6, 2))
+        self.env_dir_var = tk.StringVar(value="")
+        self._row(
+            env_card.body,
+            "游戏目录",
+            "",
+            lambda row: ctk.CTkLabel(
+                row,
+                textvariable=self.env_dir_var,
+                anchor="e",
+                justify="right",
+                wraplength=420,
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
+            ),
+        )
+
+        def _detect_control(row):
+            from gelauncher.ui.widgets import button
+
+            return button(row, "检测", self.detect_java, width=80)
+
+        self._row(
+            env_card.body,
+            "本机 Java",
+            "启动游戏前会自动检测；也可以点右侧「检测」重新扫描",
+            _detect_control,
+        )
+
         self.env_java_list_label = ctk.CTkLabel(
             env_card.body,
             textvariable=self.java_list_var,
@@ -1519,31 +1550,15 @@ class SettingsPage(Page):
             wraplength=760,
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=12),
         )
-        self.env_java_list_label.pack(fill="x", padx=14, pady=(2, 2))
+        self.env_java_list_label.pack(fill="x", padx=14, pady=(0, 10))
 
         def _refit_env(event) -> None:
             from gelauncher.ui import theme as theme_mod
 
-            wrap = max(int(event.width / theme_mod.scale_factor()) - 24, 260)
-            self.env_label.configure(wraplength=wrap)
+            wrap = max(int(event.width / theme_mod.scale_factor()) - 28, 260)
             self.env_java_list_label.configure(wraplength=wrap)
 
         env_card.body.bind("<Configure>", _refit_env, add="+")
-
-        from gelauncher.ui.widgets import button
-
-        detect_row = ctk.CTkFrame(env_card.body, fg_color="transparent")
-        detect_row.pack(fill="x", padx=14, pady=(10, 6))
-        ctk.CTkLabel(
-            detect_row,
-            text="重新扫描本机已安装的 Java",
-            anchor="w",
-            justify="left",
-            wraplength=520,
-            text_color=theme.MUTED,
-            font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
-        ).pack(side="left", fill="x", expand=True)
-        button(detect_row, "检测", self.detect_java, width=80).pack(side="right")
 
         # 关于
         about = self._setting_sections["about"]
@@ -1648,7 +1663,10 @@ class SettingsPage(Page):
         self._loading = False
         self.refresh_java_choices()
         env = current_env()
-        self.env_var.set(f"系统：{env.os_name} / {env.arch}   游戏目录：{self.app.layout.root}")
+        self.env_system_var.set(f"{env.os_name} / {env.arch}")
+        self.env_dir_var.set(str(self.app.layout.root))
+        if not getattr(self.app, "detected_javas", []):
+            self.app.detect_java()
 
     def _step_memory(self, delta: int) -> None:
         try:
@@ -1679,7 +1697,7 @@ class SettingsPage(Page):
                 "\n".join(f"Java {major}（{path}）" for major, path in runtimes)
             )
         else:
-            self.java_list_var.set("还没有检测到 Java，点右侧「检测」扫描本机")
+            self.java_list_var.set("还没有检测到 Java，启动游戏时会自动扫描")
 
     def _reset_defaults(self) -> None:
         from gelauncher.config import Config as ConfigClass
