@@ -855,3 +855,26 @@ def test_import_dialog_version_is_locked_until_edit(app, tmp_path):
     assert dialog._version_entry.cget("state") == "normal"
     assert dialog.version_var.get() == "1.20.1"
     dialog.destroy()
+
+def test_scan_finds_launcher_local_java(app, tmp_path, monkeypatch):
+    """启动器自己下的 Java（<游戏目录>/launcher/java）也要被扫描到。"""
+    from types import SimpleNamespace
+
+    from gelauncher.core import java as java_core
+    from gelauncher.core.layout import GameLayout
+
+    root = tmp_path / "mc"
+    exe = root / "launcher" / "java" / "temurin-8" / "jdk" / "bin" / "java.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"fake")
+
+    app.layout = GameLayout(root)
+    monkeypatch.setattr(java_core, "installed_javas", lambda: [])
+    monkeypatch.setattr(
+        java_core,
+        "probe_java_cached",
+        lambda path: SimpleNamespace(major=8, path=Path(path)),
+    )
+
+    pairs = app.scan_installed_javas()
+    assert (8, str(exe)) in pairs

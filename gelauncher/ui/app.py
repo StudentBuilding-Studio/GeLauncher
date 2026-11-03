@@ -165,6 +165,8 @@ class LauncherApp:
             page.grid_remove()
 
         self.current_page = ""
+        self._launching = False
+        self._selected_java: Path | None = None
 
     def _preload(self) -> None:
         """启动后预热首次点击会用到的东西：Java 探测、jar 内嵌版本号、实例 JSON。"""
@@ -405,6 +407,7 @@ class LauncherApp:
 
     def ensure_java(self, version_id: str) -> bool:
         """检查版本要求的 Java；缺了就提示自动下载。返回 False 表示先别启动。"""
+        self._selected_java = None
         from gelauncher.core.java import (
             choose_java,
             java_major_compatible,
@@ -425,6 +428,7 @@ class LauncherApp:
         if manual:
             runtime = probe_java(manual)
             if runtime is not None and java_major_compatible(required, runtime.major):
+                self._selected_java = Path(manual)
                 return True
             if runtime is None:
                 reason = f"手动指定的 Java 跑不起来：{manual}"
@@ -457,6 +461,8 @@ class LauncherApp:
         ):
             satisfied = False
         if satisfied:
+            if runtime is not None:
+                self._selected_java = runtime.path
             return True
         found = []
         for item in self.java_choices():
@@ -525,6 +531,16 @@ class LauncherApp:
         return False
 
     def launch(self, version_id: str) -> None:
+        # 防止连点：ensure_java 会同步扫描 Java，期间再点一次会重复启动
+        if self._launching:
+            return
+        self._launching = True
+        try:
+            self._launch_impl(version_id)
+        finally:
+            self._launching = False
+
+    def _launch_impl(self, version_id: str) -> None:
         if self.busy:
             messagebox.showinfo("等一下", "上一个任务还没结束")
             return
@@ -545,7 +561,11 @@ class LauncherApp:
                 layout=self.layout,
                 version_id=version_id,
                 account=account,
-                java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
+                java_path=(
+                    Path(settings["java_path"])
+                    if settings.get("java_path")
+                    else self._selected_java
+                ),
                 max_memory_mb=int(settings["max_memory_mb"]),
                 width=settings.get("width"),
                 height=settings.get("height"),
@@ -643,7 +663,11 @@ class LauncherApp:
             layout=self.layout,
             version_id=version_id,
             account=account,
-            java_path=Path(settings["java_path"]) if settings.get("java_path") else None,
+            java_path=(
+                Path(settings["java_path"])
+                if settings.get("java_path")
+                else self._selected_java
+            ),
             max_memory_mb=int(settings["max_memory_mb"]),
             extra_jvm_args=self._split_jvm_args(settings),
             dry_run=True,
@@ -1033,10 +1057,26 @@ class LauncherApp:
 
         启动游戏前调用，保证"装过但没点检测"的 Java 也能被用上。
         """
-        from gelauncher.core.java import installed_javas
+        from gelauncher.core.java import installed_javas, probe_java_cached
 
         runtimes = installed_javas()
         pairs = [(item.major, str(item.path)) for item in runtimes]
+
+        # 启动器自己下载的 Java 在 <游戏目录>/launcher/java 下，不在系统注册表里，
+        # 不扫描的话会漏掉已经装好的 Java 8/17/21
+        local_root = self.layout.root / "launcher" / "java"
+        seen = {path.lower() for _major, path in pairs}
+        if local_root.is_dir():
+            for exe in sorted(local_root.glob("*/**/bin/java.exe")) + sorted(
+                local_root.glob("**/bin/java.exe")
+            ):
+                if str(exe).lower() in seen:
+                    continue
+                runtime = probe_java_cached(exe)
+                if runtime is None:
+                    continue
+                seen.add(str(exe).lower())
+                pairs.append((runtime.major, str(runtime.path)))
         changed = False
         for _major, path in pairs:
             if self.config.add_java_path(path):
