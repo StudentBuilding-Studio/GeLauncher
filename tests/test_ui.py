@@ -915,3 +915,26 @@ def test_single_instance_second_acquire_fails():
     name = f"GeLauncher-Test-{os.getpid()}"
     assert acquire(name)
     assert not acquire(name)
+
+def test_theme_switch_updates_custom_widgets(app):
+    """切深色 / 跟随系统后，自绘标题栏和实例列表要跟着换色。"""
+    import time
+
+    from gelauncher.ui import theme
+
+    app.show_page("versions")
+    for _ in range(30):
+        app.root.update()
+        time.sleep(0.01)
+    tree = app.pages["versions"].tree
+    # 测试 fixture 用普通 Tk() 建窗口，这里手动指向当前 root
+    theme._ui_root = app.root
+
+    for mode in ("dark", "light", "system"):
+        theme.set_mode(mode)
+        end = time.time() + 2.0
+        while time.time() < end:
+            app.root.update()
+            time.sleep(0.02)
+        assert app.titlebar._bg == theme.bg()
+        assert tree._body.cget("bg") == theme.bg()

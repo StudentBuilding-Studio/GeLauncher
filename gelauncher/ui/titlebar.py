@@ -82,6 +82,7 @@ class TitleBar(ctk.CTkFrame):
             anchor="w",
             font=ctk.CTkFont(family="Microsoft YaHei UI", size=13, weight="bold"),
         )
+        self._title.configure(text_color=theme.color(theme.TEXT))
         self._title.grid(row=0, column=1, sticky="w")
         self.columnconfigure(1, weight=1)
 
@@ -118,6 +119,16 @@ class TitleBar(ctk.CTkFrame):
     # ------------------------------------------------------------------ 外观
 
     def _on_theme(self) -> None:
+        # 切换主题时 CTk 的全局重绘是异步的，先立刻刷一遍，
+        # 再在 120/400ms 各补一次，避免标题栏停留在旧配色（浅底浅字）
+        self._apply_theme()
+        try:
+            self.after(120, self._apply_theme)
+            self.after(400, self._apply_theme)
+        except tk.TclError:
+            pass
+
+    def _apply_theme(self) -> None:
         self._bg = theme.color(theme.BG)
         try:
             self.configure(fg_color=self._bg)
@@ -125,8 +136,19 @@ class TitleBar(ctk.CTkFrame):
                 self._icon_label.configure(bg=self._bg)
             except tk.TclError:
                 pass
-            for button in self._buttons.values():
-                button.configure(text_color=theme.TEXT)
+            self._title.configure(text_color=theme.color(theme.TEXT))
+            for name, button in self._buttons.items():
+                if name == "close":
+                    button.configure(
+                        fg_color="transparent",
+                        text_color=theme.color(theme.TEXT),
+                        hover_color="#c42b1c",
+                    )
+                else:
+                    button.configure(
+                        text_color=theme.color(theme.TEXT),
+                        hover_color=("#e2e8f0", "#2a2f37"),
+                    )
         except tk.TclError:
             pass
 

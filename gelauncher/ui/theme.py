@@ -39,6 +39,7 @@ ROW_SELECTED = ("#dbeafe", "#1e3a5f")
 _current_mode = MODE_SYSTEM
 _listeners: list = []
 _ttk_root = None
+_ui_root = None
 _SCALE_CACHE: float | None = None
 
 
@@ -106,14 +107,17 @@ def _fix_default_font() -> None:
 
 
 def make_root() -> tk.Tk:
+    global _ui_root
     if ctk is None:
         root = tk.Tk()
+        _ui_root = root
         apply_window_icon(root)
         return root
     _fix_default_font()
     ctk.set_appearance_mode(_current_mode)
     ctk.set_default_color_theme("blue")
     root = ctk.CTk()
+    _ui_root = root
     apply_window_icon(root)
     # CTk 在 after(200) 里还有一次标题栏图标处理，500ms 后再兜一遍，
     # 确保最终显示的是我们的图标（而不是它自带的占位图标）
@@ -142,12 +146,15 @@ def set_mode(mode: str) -> None:
             except Exception:  # noqa: BLE001 - 单个界面出错不影响其它
                 pass
 
-    if _ttk_root is not None:
-        # CTk 的 get_appearance_mode() 在 set 之后要等它自己的回调跑完才准，
-        # 这里推到 idle 再刷，避免 ttk 用旧调色板把页面刷成深色。
+    if _ui_root is not None:
+        # CTk 的 get_appearance_mode() 在 set 之后要等它自己的回调跑完才准；
+        # 切到"跟随系统"时尤其慢（darkdetect 还要再探测一次）。
+        # 这里分几个时间点重复通知监听者，让自绘控件（标题栏、列表、滚动条）
+        # 能在 CTk 真正切换完成后重新取色，不会停在旧主题的半截状态。
         try:
-            _ttk_root.after_idle(_refresh)
-            _ttk_root.after(60, _refresh)
+            _ui_root.after_idle(_refresh)
+            for delay in (60, 200, 500, 900):
+                _ui_root.after(delay, _refresh)
             return
         except Exception:  # noqa: BLE001
             pass
