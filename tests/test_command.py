@@ -175,3 +175,34 @@ def test_rotating_sink_rotates(tmp_path):
     assert (tmp_path / "game.log.1").is_file()
     sink.write("y")
     sink.close()
+
+def test_pump_survives_formatter_failure(monkeypatch):
+    import io
+
+    from gelauncher.core import launch as launch_module
+
+    class BadFormatter:
+        def feed(self, line):
+            raise RuntimeError("boom")
+
+        def flush(self):
+            return []
+
+    monkeypatch.setattr(launch_module, "GameOutputFormatter", lambda: BadFormatter())
+    sink = io.StringIO()
+    seen = []
+    launch_module._pump(io.StringIO("a\nb\n"), sink, seen.append)
+    assert seen == ["a", "b"]
+    assert "a" in sink.getvalue()
+
+
+def test_pump_reads_normal_output():
+    import io
+
+    from gelauncher.core import launch as launch_module
+
+    sink = io.StringIO()
+    seen = []
+    launch_module._pump(io.StringIO("[12:00:00] [main/INFO]: hello\n"), sink, seen.append)
+    assert seen
+    assert sink.getvalue()

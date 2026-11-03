@@ -410,20 +410,32 @@ class _RotatingSink:
 
 
 def _pump(stream: TextIO, sink, on_line: Callable[[str], None] | None) -> None:
+    formatter = GameOutputFormatter()
 
     def emit(text: str) -> None:
         if on_line is not None:
-            on_line(text)
+            try:
+                on_line(text)
+            except Exception:  # noqa: BLE001 - UI 回调出错不能拖死游戏 stdout
+                pass
         if sink is not None:
             sink.write(text + "\n")
             sink.flush()
 
     try:
         for line in stream:
-            text = formatter.feed(line.rstrip("\r\n"))
+            raw = line.rstrip("\r\n")
+            try:
+                text = formatter.feed(raw)
+            except Exception:  # noqa: BLE001 - 格式化失败就原样透传
+                text = raw
             if text is not None:
                 emit(text)
-        for leftover in formatter.flush():
+        try:
+            leftovers = formatter.flush()
+        except Exception:  # noqa: BLE001
+            leftovers = []
+        for leftover in leftovers:
             emit(leftover)
     except (ValueError, OSError):
         pass  # 进程退出时管道关掉是正常的
