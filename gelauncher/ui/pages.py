@@ -1575,6 +1575,24 @@ class SettingsPage(Page):
                 font=ctk.CTkFont(family="Microsoft YaHei UI", size=12, weight="bold"),
             ),
         )
+        import sys
+        from pathlib import Path as _Path
+
+        program = _Path(sys.executable) if getattr(sys, "frozen", False) else _Path.cwd()
+        self._row(
+            about_card.body,
+            "程序位置",
+            "如果这里不是你刚更新的那份，说明启动的是旧副本",
+            lambda row: ctk.CTkLabel(
+                row,
+                text=str(program),
+                anchor="e",
+                justify="right",
+                wraplength=320,
+                text_color=theme.MUTED,
+                font=ctk.CTkFont(family="Microsoft YaHei UI", size=11),
+            ),
+        )
         self._row(
             about_card.body,
             "GitHub 仓库",
@@ -1694,7 +1712,8 @@ class SettingsPage(Page):
         runtimes = getattr(self.app, "detected_javas", [])
         if runtimes:
             self.java_list_var.set(
-                "\n".join(f"Java {major}（{path}）" for major, path in runtimes)
+                # 用不换行空格，避免窗口变窄时把 "Java 8" 断成两行
+                "\n".join(f"Java\u00a0{major}（{path}）" for major, path in runtimes)
             )
         else:
             self.java_list_var.set("还没有检测到 Java，启动游戏时会自动扫描")
