@@ -655,6 +655,32 @@ def _drop_vanilla_shim(layout: GameLayout, actual: str) -> None:
     shutil.rmtree(layout.version_dir(actual), ignore_errors=True)
 
 
+def _mirrored_library_jobs(
+    layout: GameLayout, version: VersionJson, env: Environment
+) -> list[DownloadJob]:
+    """和 _library_jobs 一样，但每个库都带多源回退（官方 → BMCLAPI → 腾讯 → Central）。"""
+    from .forge_processors import _artifact_urls
+
+    jobs: list[DownloadJob] = []
+    for library in version.libraries:
+        if not allow(library.rules, env):
+            continue
+        artifact = library.artifact or libraries.synthetic_artifact(library)
+        if artifact is None:
+            continue
+        relative = libraries.artifact_relative_path(library, artifact)
+        jobs.append(
+            DownloadJob(
+                urls=_artifact_urls(artifact.url, relative),
+                destination=layout.libraries_dir / relative,
+                sha1=artifact.sha1,
+                size=artifact.size,
+                label=relative,
+            )
+        )
+    return jobs
+
+
 def _library_jobs(
     layout: GameLayout, version: VersionJson, env: Environment
 ) -> list[DownloadJob]:
@@ -850,15 +876,19 @@ def _attach_via_processors(
     raw = _merge_loader_json(layout, instance, patch, loader=loader)
 
     merged = VersionJson.from_dict(raw, f"merged({instance})")
-    jobs = _library_jobs(layout, merged, Environment())
+    jobs = _mirrored_library_jobs(layout, merged, Environment())
     _notify(progress, "libraries", f"下载 {len(jobs)} 个加载器库…")
     report = fetcher.download_all(
         jobs, should_stop=(cancel.cancelled if cancel else None)
     )
     if not report.ok:
-        raise LoaderInstallError(
-            "加载器库下载失败：\n"
-            + "\n".join(f"  - {name}：{reason}" for name, reason in report.failures[:10])
+        # 实例里可能带着 OptiFine 之类不在标准 Maven 的库，不能因为个别失败就整个安装失败；
+        # 加载时 prepare 会再检查真正缺的库。
+        _notify(
+            progress,
+            "libraries",
+            f"[警告] {len(report.failures)} 个库没下载成功（启动时会再检查）："
+            + "、".join(name for name, _reason in report.failures[:5]),
         )
 
 
@@ -908,9 +938,18 @@ def install_forge(
     # installer / processors 都要求有一个以真实版本号命名的原版目录
     created_shim = _ensure_vanilla_shim(layout, instance, actual)
 
-    # 有 processors 就走 HMCL 那套流程（顺便规避老 installer 没有 --installClient 的问题）
-    if _has_processors(installer_path):
-        _notify(progress, "processors", "用 processors 方式安装（不依赖 installer 命令行）…")
+    # 优先用 install_profile 安装：自己下库、自己合并版本 JSON，不依赖 installer 联网。
+    # 老 Forge 没有 processors、只有 version.json，也走这条路（HMCL 的做法）。
+    from .forge_processors import ProcessorError, read_profile
+
+    profile_usable = True
+    try:
+        read_profile(installer_path)
+    except Exception:  # noqa: BLE001 - 不是标准 installer，退回命令行
+        profile_usable = False
+
+    if profile_usable:
+        _notify(progress, "processors", "用 install_profile 方式安装（不依赖 installer 命令行）…")
         try:
             _attach_via_processors(
                 layout,
@@ -923,18 +962,21 @@ def install_forge(
                 progress=progress,
                 cancel=cancel,
             )
-        except ProcessorError as exc:
+        except (ProcessorError, LoaderInstallError) as exc:
+            _notify(
+                progress,
+                "processors",
+                f"profile 方式失败（{exc}），改试 installer 命令行兜底…",
+            )
+        else:
             if created_shim:
                 _drop_vanilla_shim(layout, actual)
-            raise LoaderInstallError(f"Forge 安装失败：{exc}") from exc
-        if created_shim:
-            _drop_vanilla_shim(layout, actual)
-        if loader_of(layout, instance) != "forge":
-            raise LoaderInstallError("Forge 合并进实例失败")
-        _notify(progress, "done", f"{instance} 已装上 Forge（{coordinate}）")
-        return LoaderReport(
-            version_id=instance, loader="forge", installer_path=installer_path
-        )
+            if loader_of(layout, instance) != "forge":
+                raise LoaderInstallError("Forge 合并进实例失败")
+            _notify(progress, "done", f"{instance} 已装上 Forge（{coordinate}）")
+            return LoaderReport(
+                version_id=instance, loader="forge", installer_path=installer_path
+            )
 
     seeded, failures = seed_install_profile_libraries(
         fetcher, layout, installer_path, progress=progress
