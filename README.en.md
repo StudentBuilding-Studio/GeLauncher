@@ -126,12 +126,6 @@ python -m gelauncher launch --version-id 1.21.8
 
 ## FAQ
 
-**The game is stuck at `Atlas Stitching ... shulker_boxes.png`**
-
-Wait 2–3 minutes first. The first launch stitches texture atlases for every mod and can be very
-slow on HDDs or while antivirus scans mod jars. If the log stops growing entirely, try removing
-suspicious mods (e.g. Xaero's mods) and update your GPU driver.
-
 **Old versions (1.12.2, etc.) crash with `ClassCastException: AppClassLoader`**
 
 That means Forge is running on Java 9+. The launcher automatically chooses Java 8 for versions that

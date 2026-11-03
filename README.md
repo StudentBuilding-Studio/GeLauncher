@@ -107,11 +107,6 @@ python -m gelauncher launch --version-id 1.21.8
 
 ## 常见问题
 
-**Q：游戏卡在 `Atlas Stitching ... shulker_boxes.png`？**
-
-先等 2–3 分钟，首次启动要拼接所有 mod 的纹理图集，机械盘或杀软扫描时会很慢。
-如果日志完全不再增长，再尝试移出可疑 mod（例如 Xaero 系列）、更新显卡驱动。
-
 **Q：老版本（1.12.2 等）启动崩溃 `ClassCastException: AppClassLoader`？**
 
 这是 Forge 用了 Java 9+。启动器会自动为要求 Java 8 的版本选择 Java 8；
