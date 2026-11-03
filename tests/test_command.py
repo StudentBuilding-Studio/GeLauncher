@@ -157,3 +157,10 @@ def test_full_vanilla_expansion_has_no_unknown_placeholders():
     game = expand_arguments(version.game_arguments, placeholders, ENV)
     assert "${" not in " ".join(game)
     assert "net.minecraft.client.main.Main" not in game
+
+def test_redact_command_hides_access_token():
+    from gelauncher.core.launch import redact_command
+
+    text = redact_command("java --accessToken abc.def --gameDir x")
+    assert "abc.def" not in text
+    assert "--accessToken ***" in text

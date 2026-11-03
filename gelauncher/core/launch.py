@@ -59,6 +59,15 @@ class LaunchOptions:
     dry_run: bool = False
 
 
+def redact_command(command: str) -> str:
+    """把命令里的 access token 打码，避免日志/截图泄露登录令牌。"""
+    import re as _re
+
+    text = _re.sub(r"(--accessToken\s+)\S+", r"\1***", command)
+    text = _re.sub(r"(--accessToken=)\S+", r"\1***", text)
+    return text
+
+
 @dataclass(frozen=True)
 class LaunchPlan:
     command: list[str]

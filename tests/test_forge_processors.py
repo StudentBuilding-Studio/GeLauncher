@@ -87,3 +87,18 @@ def test_artifact_urls_include_central_fallback():
     assert "https://mirrors.cloud.tencent.com/" in urls[2]
     assert "https://repo1.maven.org/maven2/" in urls[3]
     assert len(urls) == len(set(urls))
+
+def test_safe_library_path_rejects_traversal(tmp_path):
+    from gelauncher.core.forge_processors import ProcessorError, safe_library_path
+    from gelauncher.core.layout import GameLayout
+
+    layout = GameLayout(tmp_path / "mc")
+    try:
+        safe_library_path(layout, "../evil.jar")
+    except ProcessorError as exc:
+        assert "越界" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("越界路径应当被拒绝")
+
+    inside = safe_library_path(layout, "net/example/a.jar")
+    assert inside.is_relative_to(layout.libraries_dir.resolve())

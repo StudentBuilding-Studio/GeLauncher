@@ -15,6 +15,7 @@ Forge 仍然调官方 installer：installer 本身能从 BMCLAPI 下到（6.3MB/
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import time
 import threading
@@ -37,6 +38,8 @@ FORGE_PROMOTIONS = "https://files.minecraftforge.net/net/minecraftforge/forge/pr
 BMCLAPI_MAVEN = "https://bmclapi2.bangbang93.com/maven/"
 
 INSTALLER_TIMEOUT = 10 * 60
+#: 通过 sha1 校验、允许 java -jar 的 installer
+_VERIFIED_INSTALLERS: set[str] = set()
 #: installer 多久没有任何输出就判定卡死（卡在下载时通常一行都不再打印）
 INSTALLER_IDLE_TIMEOUT = 180
 
@@ -862,8 +865,17 @@ def _attach_via_processors(
     progress: ProgressHook | None = None,
     cancel=None,
 ) -> None:
-    """跑 processors，把产出的版本 JSON 合并进实例，并下载加载器库。"""
-    from .forge_processors import ProcessorError, install_with_processors, read_profile
+    """跑 processors，把产出的版本 JSON 合并进实例，并下载加载器库。
+
+    合并和下载是一体的：中途失败必须把实例 JSON 恢复原样，
+    否则会留下"指向加载器但库不全"的半坏实例。
+    """
+    from .forge_processors import (
+        ProcessorError,
+        artifact_relative_path,
+        install_with_processors,
+        read_profile,
+    )
 
     profile = read_profile(installer_path)
     java_path = None
@@ -880,40 +892,59 @@ def _attach_via_processors(
         progress=progress,
         cancel=cancel,
     )
-    raw = _merge_loader_json(layout, instance, patch, loader=loader)
 
-    merged = VersionJson.from_dict(raw, f"merged({instance})")
-    jobs = _mirrored_library_jobs(layout, merged, Environment())
-    _notify(progress, "libraries", f"下载 {len(jobs)} 个加载器库…")
-    report = fetcher.download_all(
-        jobs, should_stop=(cancel.cancelled if cancel else None)
-    )
-    # 实例自带的库（例如 OptiFine）可能不在标准 Maven，失败可以容忍；
-    # 但加载器自己的库（patch 里的 libraries）缺了就是坏安装，必须报错。
-    from .forge_processors import artifact_relative_path
+    json_path = layout.version_json_path(instance)
+    original = json_path.read_bytes() if json_path.is_file() else None
+    try:
+        raw = _merge_loader_json(layout, instance, patch, loader=loader)
 
-    critical: list[str] = []
-    for entry in patch.get("libraries") or []:
-        path = ((entry.get("downloads") or {}).get("artifact") or {}).get("path")
-        if not path:
+        merged = VersionJson.from_dict(raw, f"merged({instance})")
+        jobs = _mirrored_library_jobs(layout, merged, Environment())
+        _notify(progress, "libraries", f"下载 {len(jobs)} 个加载器库…")
+        report = fetcher.download_all(
+            jobs, should_stop=(cancel.cancelled if cancel else None)
+        )
+
+        # 实例自带的库（例如 OptiFine）可能不在标准 Maven，失败可以容忍；
+        # 但加载器自己的库（patch 里的 libraries）缺了就是坏安装，必须报错。
+        critical: list[str] = []
+        for entry in patch.get("libraries") or []:
+            path = ((entry.get("downloads") or {}).get("artifact") or {}).get("path")
+            if not path:
+                try:
+                    path = artifact_relative_path(str(entry.get("name") or ""))
+                except Exception:  # noqa: BLE001
+                    path = ""
+            if path:
+                critical.append(path)
+        missing = [
+            item for item in critical if not (layout.libraries_dir / item).is_file()
+        ]
+        if missing:
+            raise LoaderInstallError(
+                "加载器库缺失：\n  " + "\n  ".join(missing[:8])
+            )
+        if not report.ok:
+            _notify(
+                progress,
+                "libraries",
+                f"[警告] {len(report.failures)} 个实例自带的库没下载成功（启动时会再检查）："
+                + "、".join(name for name, _reason in report.failures[:5]),
+            )
+    except Exception:
+        if original is not None:
             try:
-                path = artifact_relative_path(str(entry.get("name") or ""))
-            except Exception:  # noqa: BLE001
-                path = ""
-        if path:
-            critical.append(path)
-    missing = [item for item in critical if not (layout.libraries_dir / item).is_file()]
-    if missing:
-        raise LoaderInstallError(
-            "加载器库缺失：\n  " + "\n  ".join(missing[:8])
-        )
-    if not report.ok:
-        _notify(
-            progress,
-            "libraries",
-            f"[警告] {len(report.failures)} 个实例自带的库没下载成功（启动时会再检查）："
-            + "、".join(name for name, _reason in report.failures[:5]),
-        )
+                json_path.write_bytes(original)
+            except OSError:
+                pass
+        raise
+
+
+def _validate_loader_version(value: str, label: str) -> str:
+    text = str(value or "").strip()
+    if not re.fullmatch(r"[0-9A-Za-z._+\-]+", text):
+        raise LoaderInstallError(f"{label} 版本号不合法：{value!r}")
+    return text
 
 
 def install_forge(
@@ -937,7 +968,9 @@ def install_forge(
         _require_no_other_loader(layout, instance, "forge")
 
     _notify(progress, "resolve", f"查 Forge 版本（MC {actual}）…")
-    forge_version = forge_version or forge_version_for(fetcher, actual)
+    forge_version = _validate_loader_version(
+        forge_version or forge_version_for(fetcher, actual), "Forge"
+    )
     coordinate = (
         forge_version
         if forge_version.startswith(actual + "-")
@@ -1115,7 +1148,9 @@ def install_neoforge(
         _require_no_other_loader(layout, instance, "neoforge")
 
     _notify(progress, "resolve", f"查 NeoForge 版本（MC {actual}）…")
-    version = neoforge_version or latest_neoforge(fetcher, actual)
+    version = _validate_loader_version(
+        neoforge_version or latest_neoforge(fetcher, actual), "NeoForge"
+    )
 
     cache_dir = layout.root / "launcher" / "installers"
     cache_dir.mkdir(parents=True, exist_ok=True)
@@ -1223,15 +1258,38 @@ def install_neoforge(
 # --------------------------------------------------------------------------- #
 
 
+def _fetch_installer_sha1(fetcher: Fetcher, urls: list[str]) -> str | None:
+    """installer 必须校验 sha1：它接下来会被 java -jar 执行。"""
+    for url in urls:
+        try:
+            raw = fetcher.get_bytes(url + ".sha1", label="installer 校验值", ttl=600)
+        except Exception:  # noqa: BLE001 - 换下一个源
+            continue
+        token = raw.decode("utf-8", "replace").strip().split()
+        if token and re.fullmatch(r"[0-9a-fA-F]{40}", token[0]):
+            return token[0].lower()
+    return None
+
+
 def _download_installer(fetcher: Fetcher, urls: list[str], destination: Path, label: str) -> Path:
     from .net import DownloadError
 
+    sha1 = _fetch_installer_sha1(fetcher, urls)
     try:
-        report = fetcher.download(DownloadJob(urls=urls, destination=destination, label=label))
+        report = fetcher.download(
+            DownloadJob(
+                urls=urls,
+                destination=destination,
+                label=label,
+                sha1=sha1,
+            )
+        )
     except DownloadError as exc:
         raise LoaderInstallError(f"installer 下载失败：{exc}") from exc
     if not report.ok:
         raise LoaderInstallError(f"installer 下载失败：{report.failures}")
+    if sha1:
+        _VERIFIED_INSTALLERS.add(str(destination.resolve()))
     return destination
 
 
@@ -1259,6 +1317,12 @@ def run_installer(
     cancel=None,
 ) -> list[str]:
     """跑 installer，把输出逐行喂给回调，失败时抛出带尾部日志的异常。"""
+    if str(installer.resolve()) not in _VERIFIED_INSTALLERS:
+        # 没校验过的 jar 一律不执行；profile 安装不需要跑它
+        raise LoaderInstallError(
+            "installer 没有通过 sha1 校验，拒绝执行。\n"
+            "如果这个版本没有可用的 sha1，只能使用 install_profile 方式安装。"
+        )
     command = [str(java.path), "-jar", str(installer), *args]
     output: list[str] = []
     try:

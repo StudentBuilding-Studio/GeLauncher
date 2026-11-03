@@ -129,6 +129,13 @@ class LogWindow(Dialog):
                 break
         self.text.configure(state="normal")
         self.text.insert("end", line + "\n", tag)
+        # 长时间运行时限制 Text 里的行数，防止内存一直涨
+        try:
+            total = int(self.text.index("end-1c").split(".")[0])
+            if total > 5000:
+                self.text.delete("1.0", f"{total - 4000}.0")
+        except (tk.TclError, ValueError):
+            pass
         if self.autoscroll.get():
             self.text.see("end")
         self.text.configure(state="disabled")

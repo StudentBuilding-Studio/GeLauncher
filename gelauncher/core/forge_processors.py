@@ -106,8 +106,29 @@ def artifact_relative_path(descriptor: str) -> str:
     return f"{group.replace('.', '/')}/{artifact}/{version}/{name}"
 
 
+def safe_library_path(layout: GameLayout, relative: str, label: str = "库") -> Path:
+    """把 install_profile 里的相对路径限制在 libraries/ 内，挡住 ../ 和绝对路径。"""
+    root = layout.libraries_dir.resolve()
+    target = (root / str(relative)).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ProcessorError(f"{label}路径越界：{relative}") from exc
+    return target
+
+
+def safe_output_path(layout: GameLayout, path: Path, label: str = "输出") -> Path:
+    root = layout.root.resolve()
+    target = Path(path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ProcessorError(f"{label}路径越界：{path}") from exc
+    return target
+
+
 def artifact_path(layout: GameLayout, descriptor: str) -> Path:
-    return layout.libraries_dir / artifact_relative_path(descriptor)
+    return safe_library_path(layout, artifact_relative_path(descriptor), "processor 依赖")
 
 
 # --------------------------------------------------------------------------- #
@@ -230,7 +251,7 @@ def _copy_legacy_root_jar(installer: Path, layout: GameLayout, install: dict) ->
     file_path = str(install.get("filePath") or "").strip()
     if not file_path:
         return
-    target = layout.libraries_dir / Path(file_path)
+    target = safe_library_path(layout, file_path, "install.filePath")
     if target.is_file():
         return
     wanted = Path(file_path).name
@@ -252,7 +273,7 @@ def _copy_embedded_maven(installer: Path, layout: GameLayout) -> None:
             if not entry.startswith("maven/") or entry.endswith("/"):
                 continue
             relative = entry[len("maven/") :]
-            target = layout.libraries_dir / relative
+            target = safe_library_path(layout, relative, "installer 内嵌库")
             if target.is_file():
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -281,7 +302,7 @@ def _download_profile_libraries(
                 continue
         if not path:
             continue
-        destination = layout.libraries_dir / path
+        destination = safe_library_path(layout, path, "install_profile 库")
         if destination.is_file():
             continue
         jobs.append(
@@ -478,7 +499,11 @@ def install_with_processors(
             parsed_outputs: dict[Path, str] = {}
             missing = False
             for key, value in outputs.items():
-                out_path = Path(_parse_literal(str(key), vars, layout, extract))
+                out_path = safe_output_path(
+                    layout,
+                    Path(_parse_literal(str(key), vars, layout, extract)),
+                    "processor 输出",
+                )
                 expected = _parse_literal(str(value), vars, layout, extract)
                 parsed_outputs[out_path] = expected
                 if not out_path.is_file() or _sha1(out_path) != expected:

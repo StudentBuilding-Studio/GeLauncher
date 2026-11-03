@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
@@ -25,7 +26,7 @@ from gelauncher.core.command import Account
 from gelauncher.core.install_loader import install_forge  # noqa: F401  （install_forge 仍被旧代码引用）
 from gelauncher.core.install_vanilla import install_version
 from gelauncher.core.java import installed_javas
-from gelauncher.core.launch import LaunchOptions, prepare, run
+from gelauncher.core.launch import redact_command, LaunchOptions, prepare, run
 from gelauncher.core.layout import GameLayout
 from gelauncher.ui.log_window import LogWindow
 from gelauncher.ui.pages import AccountsPage, SettingsPage, VersionsPage
@@ -694,7 +695,7 @@ class LauncherApp:
         window = self.open_log_window(version_id)
         window.start_session(f"启动 {version_id}")
         window.append("=" * 70)
-        window.append(plan.printable_command())
+        window.append(redact_command(plan.printable_command()))
         window.append("=" * 70)
         window.set_status("已打印启动命令")
 
@@ -715,6 +716,8 @@ class LauncherApp:
             instance = validate_instance_name(instance)
         except InstallError as exc:
             return str(exc)
+        if not re.fullmatch(r"[0-9A-Za-z._+\-]+", str(game_version or "")):
+            return f"整合包里的游戏版本不合法：{game_version!r}"
         if self.layout.instance_exists(instance) or self.layout.version_dir(instance).exists():
             return f"实例「{instance}」已经存在，换个名字"
 
@@ -927,7 +930,12 @@ class LauncherApp:
         ):
             return
         try:
-            shutil.rmtree(target)
+            resolved = target.resolve()
+            versions_root = self.layout.versions_dir.resolve()
+            if resolved.parent != versions_root:
+                messagebox.showerror("拒绝删除", f"路径不在 versions 目录下：\n{resolved}")
+                return
+            shutil.rmtree(resolved)
         except OSError as exc:
             messagebox.showerror("删除失败", str(exc))
             return

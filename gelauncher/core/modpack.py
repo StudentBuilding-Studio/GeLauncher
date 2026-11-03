@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import re
 import os
 import zipfile
 from dataclasses import dataclass, field
@@ -471,6 +472,10 @@ def _install_loader(
     if cancel is not None:
         cancel.raise_if_cancelled()
     try:
+        if info.loader_version and not re.fullmatch(
+            r"[0-9A-Za-z._+\-]+", str(info.loader_version)
+        ):
+            raise ModpackError(f"整合包里的加载器版本不合法：{info.loader_version!r}")
         if info.loader == "fabric":
             install_loader.attach_fabric(
                 layout,

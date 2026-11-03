@@ -132,3 +132,14 @@ def test_save_is_atomic(tmp_path):
     cfg.save(target)
     assert json.loads(target.read_text(encoding="utf-8"))["game_dir"].endswith("mc")
     assert not (tmp_path / "config.json.tmp").exists()
+
+def test_corrupt_config_is_backed_up(tmp_path):
+    from gelauncher.config import Config
+
+    target = tmp_path / "config.json"
+    target.write_text("{not json", encoding="utf-8")
+    cfg = Config.load(target)
+    assert cfg.max_memory_mb == 2048
+    backups = list(tmp_path.glob("config.json.corrupt-*"))
+    assert backups
+    assert backups[0].read_text(encoding="utf-8") == "{not json"

@@ -122,7 +122,19 @@ class Config:
         if path.is_file():
             try:
                 raw = json.loads(path.read_text(encoding="utf-8"))
-            except (json.JSONDecodeError, OSError):
+            except json.JSONDecodeError:
+                # 不要静默清空：留一份损坏文件，方便用户/我们恢复
+                try:
+                    import time as _time
+
+                    backup = path.with_name(
+                        f"{path.name}.corrupt-{_time.strftime('%Y%m%d-%H%M%S')}"
+                    )
+                    path.replace(backup)
+                except OSError:
+                    pass
+                raw = {}
+            except OSError:
                 raw = {}
             if isinstance(raw, dict):
                 config._apply(raw)
@@ -260,7 +272,9 @@ class Config:
         with _SAVE_LOCK:
             path.parent.mkdir(parents=True, exist_ok=True)
             payload = {key: value for key, value in asdict(self).items()}
-            tmp = path.with_name(path.name + ".tmp")
+            tmp = path.with_name(
+                f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+            )
             tmp.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )

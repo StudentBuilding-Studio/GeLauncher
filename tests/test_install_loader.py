@@ -228,13 +228,28 @@ def test_run_installer_aborts_when_silent(monkeypatch, tmp_path):
     monkeypatch.setattr(install_loader.subprocess, "Popen", lambda *a, **k: FakeProcess())
     monkeypatch.setattr(install_loader, "INSTALLER_IDLE_TIMEOUT", 0.2)
     java = JavaRuntime(path=tmp_path / "java.exe", version="17")
+    installer = tmp_path / "installer.jar"
+    install_loader._VERIFIED_INSTALLERS.add(str(installer.resolve()))
 
     try:
-        run_installer(java, tmp_path / "installer.jar", [], cwd=tmp_path)
+        run_installer(java, installer, [], cwd=tmp_path)
     except LoaderInstallError as exc:
         assert "没有任何输出" in str(exc)
     else:  # pragma: no cover
         raise AssertionError("installer 卡死时应当抛错")
+
+
+def test_run_installer_refuses_unverified(tmp_path):
+    from gelauncher.core.install_loader import LoaderInstallError, run_installer
+    from gelauncher.core.java import JavaRuntime
+
+    java = JavaRuntime(path=tmp_path / "java.exe", version="17")
+    try:
+        run_installer(java, tmp_path / "unchecked.jar", [], cwd=tmp_path)
+    except LoaderInstallError as exc:
+        assert "拒绝执行" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("未校验的 installer 不应该被执行")
 
 def test_merge_loader_json_keeps_minecraft_arguments(tmp_path):
     import json
