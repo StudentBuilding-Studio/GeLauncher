@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import shutil
+import time
 import zipfile
 from pathlib import Path
 
@@ -73,12 +74,31 @@ def install_java(
     if not archive_path.is_file():
         if progress is not None:
             progress("java", f"下载 Temurin JDK {major}（约 190MB）…")
-            local = replace(
-                fetcher,
-                progress=lambda written, total, label: progress(
-                    "java", f"下载 Java：{written // 1048576}/{total // 1048576} MB"
-                ),
-            )
+
+            # 下载器每读一块都会回调；这里节流成每秒最多一次，避免日志被刷屏
+            last_report = [0.0]
+            best = [0]
+
+            def _on_progress(written: int, total: int, _label: str) -> None:
+                written = int(written or 0)
+                total = int(total or 0)
+                if written > best[0]:
+                    best[0] = written
+                now = time.monotonic()
+                if now - last_report[0] < 1.0 and not (total and written >= total):
+                    return
+                last_report[0] = now
+                done_mb = best[0] // 1048576
+                if total:
+                    progress(
+                        "java",
+                        f"下载 Java：{done_mb}/{total // 1048576} MB"
+                        f"（{min(100, best[0] * 100 // total)}%）",
+                    )
+                else:
+                    progress("java", f"下载 Java：{done_mb} MB")
+
+            local = replace(fetcher, progress=_on_progress)
         else:
             local = fetcher
         report = local.download(

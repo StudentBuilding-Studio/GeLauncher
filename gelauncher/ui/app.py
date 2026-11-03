@@ -498,6 +498,10 @@ class LauncherApp:
         fetcher = self.make_fetcher()
 
         def progress(stage: str, message: str) -> None:
+            if stage == "java" and message.startswith("下载 Java"):
+                # 进度只更新标题栏状态，避免每 1% 刷一行日志
+                self.messages.put(("log_status", instance, message))
+                return
             self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
@@ -716,6 +720,10 @@ class LauncherApp:
         before_versions = set(self.layout.installed_versions())
 
         def progress(stage: str, message: str) -> None:
+            if stage == "java" and message.startswith("下载 Java"):
+                # 进度只更新标题栏状态，避免每 1% 刷一行日志
+                self.messages.put(("log_status", instance, message))
+                return
             self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
@@ -806,6 +814,10 @@ class LauncherApp:
         before_versions = set(self.layout.installed_versions())
 
         def progress(stage: str, message: str) -> None:
+            if stage == "java" and message.startswith("下载 Java"):
+                # 进度只更新标题栏状态，避免每 1% 刷一行日志
+                self.messages.put(("log_status", instance, message))
+                return
             self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
@@ -995,6 +1007,10 @@ class LauncherApp:
         fetcher = self.make_fetcher()
 
         def progress(stage: str, message: str) -> None:
+            if stage == "java" and message.startswith("下载 Java"):
+                # 进度只更新标题栏状态，避免每 1% 刷一行日志
+                self.messages.put(("log_status", instance, message))
+                return
             self.messages.put(("log", instance, f"[{stage}] {message}"))
 
         def work() -> None:
