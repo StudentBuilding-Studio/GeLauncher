@@ -11,7 +11,7 @@ from pathlib import Path
 from .java import JavaRuntime, installed_javas, probe_java_cached
 
 
-def _is_under_jre(path: Path) -> bool:
+def is_under_jre(path: Path) -> bool:
     """JDK 8 自带 jre/bin/java.exe，和 bin/java.exe 是同一套，跳过。"""
     if path.parent.name.lower() != "bin":
         return False
@@ -55,7 +55,7 @@ def collect_java_runtimes(layout_root: Path, managed_dir: Path) -> list[JavaRunt
         if not root.is_dir():
             continue
         for exe in sorted(root.glob("**/bin/java.exe")):
-            if _is_under_jre(exe):
+            if is_under_jre(exe):
                 continue
             runtime = probe_java_cached(exe)
             if runtime is not None:

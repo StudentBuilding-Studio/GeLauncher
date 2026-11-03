@@ -1085,18 +1085,32 @@ class LauncherApp:
         from gelauncher.core.java import probe_java_cached
 
         combined = list(runtimes)
-        # 用户手动加的、但仍存在的 Java 也要保留
+        known_paths = {str(item.path).lower() for item in combined}
+        known_versions = {
+            (item.major, getattr(item, "version", "")) for item in combined
+        }
+        # 用户手动加的、但仍存在的 Java 也要保留；
+        # 但如果只是同一版本的别名（javapath）或 JDK 自带 jre，就不要重复加回来
+        from gelauncher.core.java_scan import is_under_jre
+
         for path in list(self.config.java_paths):
             try:
-                if not Path(path).is_file():
+                candidate = Path(path)
+                if not candidate.is_file():
                     continue
             except OSError:
                 continue
-            if any(str(item.path).lower() == path.lower() for item in combined):
+            if path.lower() in known_paths or is_under_jre(candidate):
                 continue
             probed = probe_java_cached(path)
-            if probed is not None:
-                combined.append(probed)
+            if probed is None:
+                continue
+            key = (probed.major, getattr(probed, "version", ""))
+            if key in known_versions:
+                continue
+            known_paths.add(path.lower())
+            known_versions.add(key)
+            combined.append(probed)
 
         seen: set[str] = set()
         pairs: list[tuple[int, str]] = []
@@ -1108,7 +1122,8 @@ class LauncherApp:
             pairs.append((runtime.major, str(runtime.path)))
 
         self.config.java_paths = [path for _major, path in pairs]
-        if self.config.java_path and not Path(self.config.java_path).is_file():
+        if self.config.java_path and self.config.java_path not in self.config.java_paths:
+            # 旧别名（javapath / jre）不在去重后的列表里，就别再当默认值插回去
             self.config.java_path = ""
         self.config.save()
         self.detected_javas = list(pairs)
