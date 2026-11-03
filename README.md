@@ -4,7 +4,7 @@
 
 一个只给几个朋友用的极简 Minecraft: Java Edition 启动器。Python 3.11+ / CustomTkinter（`pip install -r requirements.txt`），不需要编译。
 
-支持原版 / Fabric / Forge / NeoForge，支持离线账号（微软账号等待 Mojang 审批，暂不可用），能直接接管 HMCL、PCL2、官方启动器已经装好的 `.minecraft`。
+支持原版 / Fabric / Forge / NeoForge，支持离线账号与微软账号（设备代码流登录），能直接接管 HMCL、PCL2、官方启动器已经装好的 `.minecraft`。
 
 设计思路见 [简化启动器方案.md](简化启动器方案.md)。
 
@@ -100,8 +100,8 @@ python -m gelauncher launch --version-id 1.21.8
 ## 账号
 
 - **离线账号**：只允许大小写字母、数字、下划线，长度不超过 16；UUID 按 `md5("OfflinePlayer:<name>")` 计算
-- **微软账号：目前还不支持使用**。登录代码已经写好，但需要 Mojang 审批；获批前请用离线账号。
-  流程见 [msa-setup.md](msa-setup.md)
+- **微软账号**：设备代码流登录，已通过 Mojang 审批；登录后自动刷新 token，支持在账号页切换。
+  配置说明见 [msa-setup.md](msa-setup.md)
 
 > 账号 token 只保存在本机 `config.json`，不会上传到任何服务器。不要把 `config.json` 发给别人。
 
@@ -132,7 +132,6 @@ python -m gelauncher launch --version-id 1.21.8
 
 ## 已知限制
 
-- **微软账号尚未支持**：等待 Mojang 审批
 - 极老版本（1.7.10 等）的 Forge 安装依赖 installer 里的 `install_profile`；
   如果该 installer 连 profile 都没有，只能启动已经装好的实例
 - CurseForge 官方 API 在部分网络下会被 Cloudflare 403，默认走第三方代理 `mod.mcimirror.top`，

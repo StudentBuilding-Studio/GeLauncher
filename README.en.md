@@ -5,9 +5,9 @@
 A minimal Minecraft: Java Edition launcher made for a few friends. Python 3.11+ / CustomTkinter
 (`pip install -r requirements.txt`) — no build step required.
 
-Supports Vanilla / Fabric / Forge / NeoForge and offline accounts (Microsoft accounts are pending
-Mojang approval and not usable yet). It can take over an existing `.minecraft` created by HMCL,
-PCL2, or the official launcher.
+Supports Vanilla / Fabric / Forge / NeoForge, offline accounts, and Microsoft accounts via the
+device-code flow. It can take over an existing `.minecraft` created by HMCL, PCL2, or the official
+launcher.
 
 Design notes (Chinese): [简化启动器方案.md](简化启动器方案.md).
 
@@ -117,9 +117,9 @@ python -m gelauncher launch --version-id 1.21.8
 
 - **Offline account**: only letters, digits, and underscores, up to 16 characters.
   UUID is derived from `md5("OfflinePlayer:<name>")`
-- **Microsoft accounts are not usable yet.** The login code is implemented, but Mojang approval is
-  still pending. Please use an offline account for now.
-  See [msa-setup.md](msa-setup.md) (Chinese)
+- **Microsoft account**: device-code login, approved by Mojang. Tokens are refreshed automatically
+  and multiple accounts can be switched on the Accounts page.
+  Setup notes: [msa-setup.md](msa-setup.md) (Chinese)
 
 > Account tokens are stored only in the local `config.json` and are never uploaded.
 > Do not share your `config.json` with others.
@@ -155,7 +155,6 @@ Release builds are not code-signed. Click "More info → Run anyway". See
 
 ## Known limitations
 
-- **Microsoft accounts are not supported yet** (waiting for Mojang approval)
 - Installing very old Forge versions depends on `install_profile` inside the installer. If an
   installer has neither a usable profile nor a verified checksum, only already-installed instances
   can be launched
