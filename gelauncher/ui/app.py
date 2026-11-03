@@ -1078,99 +1078,68 @@ class LauncherApp:
         if self.config.add_java_path(path):
             self.config.save()
 
+    def _apply_java_scan(self, runtimes) -> list[tuple[int, str]]:
+        """把一次扫描结果落盘：清理失效路径、去重、同步候选列表和界面列表。"""
+        from pathlib import Path
+
+        from gelauncher.core.java import probe_java_cached
+
+        combined = list(runtimes)
+        # 用户手动加的、但仍存在的 Java 也要保留
+        for path in list(self.config.java_paths):
+            try:
+                if not Path(path).is_file():
+                    continue
+            except OSError:
+                continue
+            if any(str(item.path).lower() == path.lower() for item in combined):
+                continue
+            probed = probe_java_cached(path)
+            if probed is not None:
+                combined.append(probed)
+
+        seen: set[str] = set()
+        pairs: list[tuple[int, str]] = []
+        for runtime in sorted(combined, key=lambda item: (-item.major, str(item.path).lower())):
+            key = str(runtime.path).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append((runtime.major, str(runtime.path)))
+
+        self.config.java_paths = [path for _major, path in pairs]
+        if self.config.java_path and not Path(self.config.java_path).is_file():
+            self.config.java_path = ""
+        self.config.save()
+        self.detected_javas = list(pairs)
+        self.messages.put(("java_choices", pairs))
+        return pairs
+
     def scan_installed_javas(self) -> list[tuple[int, str]]:
         """同步扫一遍本机 Java（探测有缓存），结果并入下拉候选。
 
         启动游戏前调用，保证"装过但没点检测"的 Java 也能被用上。
         """
-        from gelauncher.core.java import installed_javas, probe_java_cached
-
-        runtimes = installed_javas()
-        pairs = [(item.major, str(item.path)) for item in runtimes]
-
-        # 启动器自己下载的 Java 放在数据目录下（managed_java_dir），
-        # 旧版本曾错误地装在 <游戏目录>/launcher/java，这里顺便迁移过来
         from gelauncher.config import managed_java_dir
+        from gelauncher.core.java_scan import collect_java_runtimes
 
-        local_root = managed_java_dir()
-        legacy_root = self.layout.root / "launcher" / "java"
-        try:
-            local_root.mkdir(parents=True, exist_ok=True)
-            moved = False
-            if legacy_root.is_dir():
-                for child in list(legacy_root.iterdir()):
-                    if not child.is_dir() or not child.name.startswith("temurin-"):
-                        continue
-                    target = local_root / child.name
-                    if target.exists():
-                        continue
-                    try:
-                        import shutil
-
-                        shutil.move(str(child), str(target))
-                        moved = True
-                    except OSError:
-                        pass  # Java 正在运行/被占用时下次再迁移
-
-            if moved:
-                # 配置里指向旧位置的路径改成新位置
-                retargeted = False
-                for index, value in enumerate(list(self.config.java_paths)):
-                    try:
-                        relative = Path(value).resolve().relative_to(
-                            legacy_root.resolve()
-                        )
-                    except (OSError, ValueError):
-                        continue
-                    new_path = local_root / relative
-                    if new_path.is_file():
-                        self.config.java_paths[index] = str(new_path)
-                        retargeted = True
-                if retargeted:
-                    self.config.save()
-        except OSError:
-            pass
-
-        seen = {path.lower() for _major, path in pairs}
-        roots = [local_root]
-        if legacy_root.is_dir():
-            roots.append(legacy_root)
-        for root in roots:
-            if not root.is_dir():
-                continue
-            for exe in sorted(root.glob("**/bin/java.exe")):
-                if str(exe).lower() in seen:
-                    continue
-                runtime = probe_java_cached(exe)
-                if runtime is None:
-                    continue
-                seen.add(str(exe).lower())
-                pairs.append((runtime.major, str(runtime.path)))
-        changed = False
-        for _major, path in pairs:
-            if self.config.add_java_path(path):
-                changed = True
-        if changed:
-            self.config.save()
-        self.detected_javas = list(pairs)
-        self.messages.put(("java_choices", pairs))
-        return pairs
+        runtimes = collect_java_runtimes(self.layout.root, managed_java_dir())
+        return self._apply_java_scan(runtimes)
 
     def detect_java(self) -> None:
-        """后台扫一遍本机 Java，把找到的路径全部塞进下拉框。"""
+        """后台扫一遍本机 Java（含启动器自己管理的目录），把结果同步到界面。"""
 
         def work() -> None:
-            runtimes = installed_javas()
-            pairs = [(item.major, str(item.path)) for item in runtimes]
-            changed = False
-            for _major, path in pairs:
-                if self.config.add_java_path(path):
-                    changed = True
-            if changed:
-                self.config.save()
-            self.messages.put(("java_choices", pairs))
-            if not pairs:
-                self.messages.put(("status", "没找到可用的 Java"))
+            try:
+                from gelauncher.config import managed_java_dir
+                from gelauncher.core.java_scan import collect_java_runtimes
+
+                runtimes = collect_java_runtimes(self.layout.root, managed_java_dir())
+                pairs = self._apply_java_scan(runtimes)
+                if not pairs:
+                    self.messages.put(("status", "没找到可用的 Java"))
+            except Exception as exc:  # noqa: BLE001
+                self.messages.put(("status", f"检测 Java 失败：{exc}"))
 
         self._start_job(work)
 

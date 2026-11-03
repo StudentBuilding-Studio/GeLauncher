@@ -233,7 +233,9 @@ def test_detect_java_fills_dropdown(app, monkeypatch, tmp_path: Path):
     fake_path.parent.mkdir(parents=True, exist_ok=True)
     fake_path.write_bytes(b"")
     runtime = java_module.JavaRuntime(path=fake_path, version="21.0.1")
-    monkeypatch.setattr(ui_app, "installed_javas", lambda: [runtime])
+    from gelauncher.core import java_scan as java_scan_module
+
+    monkeypatch.setattr(java_scan_module, "installed_javas", lambda: [runtime])
 
     app.detect_java()
     deadline = time.time() + 5
@@ -820,21 +822,17 @@ def test_titlebar_does_not_override_tkinter_root_helper(app):
 
 def test_scan_installed_javas_adds_found_paths(app, monkeypatch):
     """启动前自动扫描：config 里没记录过的 Java 也要被加进候选。"""
-    from types import SimpleNamespace
+    from gelauncher.core import java_scan as java_scan_module
+    from gelauncher.core.java import JavaRuntime
 
-    from gelauncher.core import java as java_core
-
-    added = []
-    monkeypatch.setattr(
-        java_core,
-        "installed_javas",
-        lambda: [SimpleNamespace(major=17, path=Path(r"C:\Java\jdk17\bin\java.exe"))],
-    )
-    monkeypatch.setattr(app.config, "add_java_path", lambda path: added.append(path) or True)
+    fake = Path(r"C:\Java\jdk17\bin\java.exe")
+    runtime = JavaRuntime(path=fake, version="17.0.1")
+    monkeypatch.setattr(java_scan_module, "installed_javas", lambda: [runtime])
+    monkeypatch.setattr(java_scan_module, "probe_java_cached", lambda path: None)
     pairs = app.scan_installed_javas()
 
-    assert pairs == [(17, r"C:\Java\jdk17\bin\java.exe")]
-    assert added == [r"C:\Java\jdk17\bin\java.exe"]
+    assert (17, str(fake)) in pairs
+    assert str(fake) in app.config.java_paths
 
 def test_import_dialog_version_is_locked_until_edit(app, tmp_path):
     from gelauncher.core.modpack import ModpackInfo
@@ -875,12 +873,15 @@ def test_scan_finds_launcher_local_java(app, tmp_path, monkeypatch):
     legacy_exe.write_bytes(b"fake")
 
     app.layout = GameLayout(root)
+    from gelauncher.core import java_scan as java_scan_module
+    from gelauncher.core.java import JavaRuntime
+
     monkeypatch.setattr(config_module, "managed_java_dir", lambda: managed)
-    monkeypatch.setattr(java_core, "installed_javas", lambda: [])
+    monkeypatch.setattr(java_scan_module, "installed_javas", lambda: [])
     monkeypatch.setattr(
-        java_core,
+        java_scan_module,
         "probe_java_cached",
-        lambda path: SimpleNamespace(major=8, path=Path(path)),
+        lambda path: JavaRuntime(path=Path(path), version=("8.0.1" if "temurin-8" in str(path) else "17.0.1")),
     )
 
     pairs = app.scan_installed_javas()
